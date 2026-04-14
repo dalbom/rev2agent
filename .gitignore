@@ -1,0 +1,23 @@
+# Rev2Agent config (contains API keys)
+.rev2agent_config.json
+
+# Project outputs (large files)
+*/experiment/data/
+*/experiment/checkpoints/
+*/experiment/logs/
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
