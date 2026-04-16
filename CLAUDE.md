@@ -193,8 +193,8 @@ Schema:
 - **Never** proceed to the next phase without updating the state file.
 - **Always** update `{project_dir}/research_roadmap.md` at three points:
   1. **Phase 5 start** — register the current round in the Active section.
-  2. **Phase 6 analysis** — move Active → Completed with one-line result summary.
-  3. **Phase 6 round planning** — re-evaluate Pending priorities, add newly discovered directions.
+  2. **Phase 6 analysis** — move Active → Completed with one-line result summary. If the round's evidence renders the direction unviable mid-stream (e.g., user aborts), move Active → Abandoned directly instead.
+  3. **Phase 6 round planning** — re-evaluate Pending priorities, add newly discovered directions, **and move any direction that this round rendered unviable to Abandoned. Each Abandoned entry requires a reason from the enum (`falsified` | `out_of_scope` | `low_value` | `solved_elsewhere` | `infeasible`); `falsified` additionally requires a result file path as evidence.**
 - **Always** update `experiment.active_runs` when starting or completing an experiment (PID file, round, script, timestamp, expected duration, status).
 - When the user returns after a break, the state file is the ONLY thing you rely on to understand where things stand.
 
