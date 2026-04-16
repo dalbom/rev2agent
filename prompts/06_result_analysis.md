@@ -172,10 +172,12 @@ Before presenting options, update the roadmap to reflect what was just learned:
 4. **Check for abandonment candidates.** Explicitly ask: "Did this round's evidence render any Active or Pending direction unviable?" For each such direction, move it to Abandoned with a reason from the enum:
    - `falsified` — experiment disproved the hypothesis. **Evidence field is mandatory and must be a concrete path** (e.g., `experiment/results/roundN_something.json` or `summaries/roundN_*/phase6_results.md`).
    - `out_of_scope` — valid direction but outside the current project's scope.
-   - `low_value` — expected payoff no longer justifies the cost, given current results.
+   - `low_value` — **judgment** call: expected payoff no longer justifies the cost, given current results. Use this when the direction is *possible* but not *worth* pursuing.
    - `solved_elsewhere` — prior or concurrent work already addressed it.
-   - `infeasible` — resource, time, or data constraints make it unworkable.
+   - `infeasible` — **concrete blocker**: specific resource, time, or data constraint (e.g., no GPU ≥40GB, dataset not public, required annotation unavailable). Use this when the direction is *blocked*, not merely expensive.
    Each entry must also include a **Revisit trigger** (condition for reconsidering it, or `"none"`). Never silently drop directions.
+
+**Distinguishing `low_value` vs `infeasible`:** If a concrete obstacle names itself ("no multi-node cluster", "annotation would cost $50k"), use `infeasible`. If the judgment is "we could do this but it's not a priority", use `low_value`. When in doubt, `infeasible` is the stricter claim — only use it when the blocker is real and namable.
 5. **Append a row to the Results Comparison table** with the round's key quantitative outcome (target metric, best baseline, delta, one-line finding). Never delete or modify previous rows.
 6. **Write the updated roadmap to disk** before presenting options to the user.
 

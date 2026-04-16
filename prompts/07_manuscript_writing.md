@@ -232,7 +232,7 @@ COMMON MISTAKES TO AVOID:
 conclusion.tex (~0.25 page):
 1. Brief recap of the contribution — lead with the practical value, not the method name.
 2. Key takeaway — one sentence that a reader remembers.
-3. Future work directions (2-3 concrete suggestions). Do NOT draw from Abandoned entries marked `falsified` — those are settled, not open problems. Candidate sources: Pending entries on the roadmap, `low_value` abandoned entries that a new setting would revive, and open questions surfaced by this paper's results.
+3. Future work directions (2-3 concrete suggestions). Do NOT draw from Abandoned entries marked `falsified` or `low_value` — the former are settled by experiment, the latter were already judged insufficiently valuable. Candidate sources: Pending entries on the roadmap, `solved_elsewhere` entries that this paper's setting could reopen, and open questions surfaced by this paper's results.
 
 Do NOT overclaim. Do NOT introduce new information not supported by experiments.
 Do NOT restate numbers already in the abstract — the conclusion should feel like a closing argument, not a summary table.
