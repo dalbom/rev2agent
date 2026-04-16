@@ -167,10 +167,21 @@ Before presenting options, update the roadmap to reflect what was just learned:
 1. **Move the just-completed direction from Active to Completed.** Include a one-line result summary (key metric, main finding).
 2. **Re-evaluate Pending priorities.** Current results may change the expected impact of pending directions:
    - If results suggest a certain direction is now more promising, move it up.
-   - If results make a direction irrelevant (e.g., a feature it depended on turned out to be uninformative), move it down or to Dropped.
+   - If results make a direction irrelevant (e.g., a feature it depended on turned out to be uninformative), move it down or to Abandoned (see step 4).
 3. **Add new directions discovered during the round.** Analysis, Grad-CAM, error analysis, or feedback often suggest new ideas. Add them to the appropriate priority tier with rationale and source.
-4. **Append a row to the Results Comparison table** with the round's key quantitative outcome (target metric, best baseline, delta, one-line finding). Never delete or modify previous rows.
-5. **Write the updated roadmap to disk** before presenting options to the user.
+4. **Check for abandonment candidates.** Explicitly ask: "Did this round's evidence render any Active or Pending direction unviable?" For each such direction, move it to Abandoned with a reason from the enum:
+   - `falsified` — experiment disproved the hypothesis. **Evidence field is mandatory and must be a concrete path** (e.g., `experiment/results/roundN_something.json` or `summaries/roundN_*/phase6_results.md`).
+   - `out_of_scope` — valid direction but outside the current project's scope.
+   - `low_value` — **judgment** call: expected payoff no longer justifies the cost, given current results. Use this when the direction is *possible* but not *worth* pursuing.
+   - `solved_elsewhere` — prior or concurrent work already addressed it.
+   - `infeasible` — **concrete blocker**: specific resource, time, or data constraint (e.g., no GPU ≥40GB, dataset not public, required annotation unavailable). Use this when the direction is *blocked*, not merely expensive.
+   Each entry must also include a **Revisit trigger** (condition for reconsidering it, or `"none"`). Never silently drop directions.
+
+**Distinguishing `low_value` vs `infeasible`:** If a concrete obstacle names itself ("no multi-node cluster", "annotation would cost $50k"), use `infeasible`. If the judgment is "we could do this but it's not a priority", use `low_value`. When in doubt, `infeasible` is the stricter claim — only use it when the blocker is real and namable.
+5. **Append a row to the Results Comparison table** with the round's key quantitative outcome (target metric, best baseline, delta, one-line finding). Never delete or modify previous rows.
+6. **Write the updated roadmap to disk** before presenting options to the user.
+
+**Legacy migration:** If the existing roadmap file uses the older `## Dropped` section, rename it to `## Abandoned` on this update and convert each entry to the structured format below (fill in reason/evidence/revisit-trigger from the entry's original rationale).
 
 #### Theoretical Feasibility Check
 
@@ -226,9 +237,10 @@ Once the user picks a direction:
 1. **Mark the chosen direction as Active** with the round number (e.g., `[R5]`).
 2. **Keep all non-chosen directions in Pending** at their current priority level.
 3. **If a new direction was proposed in the options but not chosen**, add it to the appropriate Pending tier.
-4. **Config drift check**: If the chosen direction changes the project's default experimental configuration (e.g., architecture, output dimensions, number of layers, preprocessing), scan all Python scripts under `{project_dir}/` for hardcoded references to the old config. Flag any scripts that need updating — especially figure/visualization generation scripts, which are often written once and not revisited when the default config evolves. See CLAUDE.md "Config Drift Check" for details.
-5. **Write the updated roadmap to disk.**
-6. **Proceed to Phase 4 (Experiment Design) or Phase 5 (Experiment Execution)** as appropriate for the chosen direction.
+4. **Mid-round abandonment (special case):** If the user explicitly abandons the currently Active direction (e.g., a pivot mid-round) instead of completing it, move it directly from Active to Abandoned with a reason from the enum. It does NOT need to pass through Completed first.
+5. **Config drift check**: If the chosen direction changes the project's default experimental configuration (e.g., architecture, output dimensions, number of layers, preprocessing), scan all Python scripts under `{project_dir}/` for hardcoded references to the old config. Flag any scripts that need updating — especially figure/visualization generation scripts, which are often written once and not revisited when the default config evolves. See CLAUDE.md "Config Drift Check" for details.
+6. **Write the updated roadmap to disk.**
+7. **Proceed to Phase 4 (Experiment Design) or Phase 5 (Experiment Execution)** as appropriate for the chosen direction.
 
 ### 6.13 Write Round Summary
 
@@ -295,20 +307,27 @@ A cross-round table tracking quantitative outcomes. Updated every round. Keeps a
 ## Completed
 - **[RN] Direction Name** — Description. *Result: key metric or finding.*
 
-## Dropped
-- **[RN] Direction Name** — Description. *Dropped: RN. Reason: ...*
+## Abandoned
+- **[RN] Direction Name** — one-line description
+  - **Abandoned at:** Round N, Phase X
+  - **Reason:** one of `falsified` | `out_of_scope` | `low_value` | `solved_elsewhere` | `infeasible`
+  - **Evidence:** for `falsified`, path to the result file that disproved it (e.g., `experiment/results/roundN_something.json`). For other reasons, 1-2 sentence rationale.
+  - **Revisit trigger:** condition that would reopen this direction, or `none`
 ```
 
 **Conventions:**
 - `[RN]` = assigned round number. `[R?]` = not yet assigned.
-- Each entry is a single bullet with bold title, em-dash, description, and italicized metadata.
+- Active / Pending / Completed entries are single bullets with bold title, em-dash, description, and italicized metadata.
+- Abandoned entries use the structured multi-field format above — all four fields are mandatory.
 - Keep descriptions concise (1-3 sentences). Link to detailed files if needed.
 - Priority tiers are re-evaluated every round, not fixed permanently.
+
+**Abandonment reason enum (`falsified` / `out_of_scope` / `low_value` / `solved_elsewhere` / `infeasible`)** is fixed. Do not invent new reasons without discussion — ambiguity collapses back into the old "dropped for some reason" problem this format is designed to prevent.
 
 ## Anti-Pattern Warnings
 
 - **Do NOT invent a full slate of new options and ignore the roadmap.** The roadmap is the primary source of options. New ideas supplement it, not replace it.
-- **Do NOT silently drop directions.** If a direction is no longer worth pursuing, move it to Dropped with an explicit reason.
+- **Do NOT silently drop directions.** If a direction is no longer worth pursuing, move it to Abandoned with a reason from the enum (`falsified` / `out_of_scope` / `low_value` / `solved_elsewhere` / `infeasible`), evidence (result file path for `falsified`; rationale for others), and a revisit trigger.
 - **Do NOT over-plan.** The roadmap is a living list, not a rigid Gantt chart. Keep entries lightweight.
 - **Do NOT block on roadmap perfection.** If unsure about priority, make a reasonable guess and move on. Priorities get re-evaluated every round anyway.
 

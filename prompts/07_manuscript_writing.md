@@ -180,6 +180,18 @@ Available context:
 ```
 Write sections/discussion.tex and sections/conclusion.tex
 
+BEFORE WRITING: Read {project_dir}/research_roadmap.md and locate the `## Abandoned` section. For each entry, classify by its `Reason` field and route it to the appropriate manuscript section:
+
+| Reason | Manuscript placement |
+|--------|---------------------|
+| `out_of_scope` | Limitations (scope boundary — state what the paper does NOT claim to cover) |
+| `infeasible` | Limitations (resource / data / time constraint that blocked the direction) |
+| `low_value` | Omit by default. Include as a single sentence in Limitations ONLY if a reader of this venue would reasonably expect the direction to be addressed |
+| `solved_elsewhere` | Strengthen Related Work (cite the prior/concurrent work that addressed it). Do NOT list as future work |
+| `falsified` | DO NOT include as future work. The experiment settled the question — it is not an open problem. Mention only if central to the paper's narrative (e.g., the failure itself is a reported contribution) |
+
+Carry the classified items into the corresponding sections below. If the Abandoned section is empty or the roadmap file does not exist, proceed with Limitations and Future Work drawn from your analysis of the results alone.
+
 discussion.tex (~0.5 page):
 
 PURPOSE: The Discussion INTERPRETS results and POSITIONS the work. It does NOT restate numbers or re-analyze tables — that belongs in Results/Experiments.
@@ -187,7 +199,7 @@ PURPOSE: The Discussion INTERPRETS results and POSITIONS the work. It does NOT r
 STRUCTURE (recommended paragraph order):
 1. Positioning — where does this method sit relative to alternatives? Start with the paper's strongest selling point.
 2. Key insight — what did the results reveal that is not obvious from the tables alone? Refer to tables by reference, do not restate numbers.
-3. Limitations and scope — honest but concise. 2-3 items maximum.
+3. Limitations and scope — honest but concise. 2-3 items maximum. Source: Abandoned entries classified as `out_of_scope` or `infeasible` (and `low_value` only if reader-relevant per the classification table above).
 
 WHAT BELONGS IN DISCUSSION:
 - Interpretation and synthesis of results (why, not what)
@@ -220,7 +232,7 @@ COMMON MISTAKES TO AVOID:
 conclusion.tex (~0.25 page):
 1. Brief recap of the contribution — lead with the practical value, not the method name.
 2. Key takeaway — one sentence that a reader remembers.
-3. Future work directions (2-3 concrete suggestions).
+3. Future work directions (2-3 concrete suggestions). Do NOT draw from Abandoned entries marked `falsified` or `low_value` — the former are settled by experiment, the latter were already judged insufficiently valuable. Candidate sources: Pending entries on the roadmap, `solved_elsewhere` entries that this paper's setting could reopen, and open questions surfaced by this paper's results.
 
 Do NOT overclaim. Do NOT introduce new information not supported by experiments.
 Do NOT restate numbers already in the abstract — the conclusion should feel like a closing argument, not a summary table.
