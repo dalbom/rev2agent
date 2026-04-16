@@ -151,6 +151,10 @@ your_project/
 └── summaries/                   # Phase and round documentation
 ```
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## License
 
 [MIT](LICENSE)
