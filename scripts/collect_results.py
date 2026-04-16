@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 def find_result_files(results_dir: Path) -> List[Path]:
-    """Find all JSON files under results_dir, excluding INDEX.md and _meta-only files."""
+    """Find all non-empty JSON files under results_dir."""
     json_files = sorted(results_dir.rglob("*.json"))
     return [f for f in json_files if f.stat().st_size > 0]
 
@@ -42,7 +42,7 @@ def extract_metrics_flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, fl
     for key, val in data.items():
         if key.startswith("_"):
             continue
-        full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
+        full_key = f"{prefix}.{key}" if prefix else key
         if isinstance(val, (int, float)) and not isinstance(val, bool):
             if math.isfinite(val):
                 metrics[full_key] = val
@@ -212,6 +212,15 @@ def group_by_round(entries: List[Dict]) -> Dict[Optional[int], List[Dict]]:
     return dict(sorted(groups.items(), key=lambda x: (x[0] is None, x[0] or 0)))
 
 
+_METHOD_COL_WIDTH = 35
+_FILE_COL_WIDTH = 40
+
+
+def _short_key(k: str) -> str:
+    """Strip dotted prefix from metric key for column headers."""
+    return k.split(".")[-1] if "." in k else k
+
+
 def format_markdown(collected: Dict[str, Any]) -> str:
     """Format collected results as a Markdown comparison table."""
     lines = []
@@ -266,7 +275,7 @@ def format_markdown(collected: Dict[str, Any]) -> str:
                 for r in rows:
                     mk.update(r["metrics"].keys())
                 mk_sorted = sorted(mk)
-                short_keys = [k.split(".")[-1] if "." in k else k for k in mk_sorted]
+                short_keys = [_short_key(k) for k in mk_sorted]
 
                 header = "| Method | " + " | ".join(short_keys) + " |"
                 sep = "|--------|" + "|".join(["------"] * len(short_keys)) + "|"
@@ -275,8 +284,8 @@ def format_markdown(collected: Dict[str, Any]) -> str:
 
                 for r in rows:
                     method = r["method"]
-                    if len(method) > 35:
-                        method = method[:32] + "..."
+                    if len(method) > _METHOD_COL_WIDTH:
+                        method = method[:_METHOD_COL_WIDTH - 3] + "..."
                     vals = []
                     for k in mk_sorted:
                         v = r["metrics"].get(k)
@@ -294,7 +303,7 @@ def format_markdown(collected: Dict[str, Any]) -> str:
             for e in file_entries:
                 fk.update(e["metrics"].keys())
             fk_sorted = [k for k in sorted_keys if k in fk]
-            short_keys = [k.split(".")[-1] if "." in k else k for k in fk_sorted]
+            short_keys = [_short_key(k) for k in fk_sorted]
 
             if fk_sorted:
                 header = "| File | " + " | ".join(short_keys) + " |"
@@ -304,8 +313,8 @@ def format_markdown(collected: Dict[str, Any]) -> str:
 
                 for entry in file_entries:
                     fname = entry["file"]
-                    if len(fname) > 40:
-                        fname = "..." + fname[-37:]
+                    if len(fname) > _FILE_COL_WIDTH:
+                        fname = "..." + fname[-(_FILE_COL_WIDTH - 3):]
                     vals = []
                     for k in fk_sorted:
                         v = entry["metrics"].get(k)

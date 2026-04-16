@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from urllib import request, error
+import unicodedata
 from urllib.parse import quote, urlencode
 
 
@@ -238,6 +239,24 @@ def title_similarity(t1: str, t2: str) -> float:
 # Crossref Lookup (primary — 50 req/sec, no API key needed)
 # ---------------------------------------------------------------------------
 
+def _best_title_match(
+    candidates: List[Dict], clean_title: str, title_key: str = "title"
+) -> Tuple[Optional[Dict], float]:
+    """Find the candidate with the highest title similarity. Returns (item, similarity)."""
+    best_sim = 0.0
+    best_item = None
+    for item in candidates:
+        raw = item.get(title_key, "")
+        # Crossref wraps title in a list
+        if isinstance(raw, list):
+            raw = raw[0] if raw else ""
+        sim = title_similarity(clean_title, raw)
+        if sim > best_sim:
+            best_sim = sim
+            best_item = item
+    return best_item, best_sim
+
+
 CROSSREF_API_BASE = "https://api.crossref.org/works"
 
 
@@ -295,17 +314,7 @@ def search_crossref(title: str) -> Tuple[bool, Dict]:
     if not items:
         return False, {"error": "no results from Crossref"}
 
-    # Find best match by title similarity
-    best_sim = 0.0
-    best_item = None
-    for item in items:
-        cr_titles = item.get("title", [])
-        cr_title = cr_titles[0] if cr_titles else ""
-        sim = title_similarity(clean, cr_title)
-        if sim > best_sim:
-            best_sim = sim
-            best_item = item
-
+    best_item, best_sim = _best_title_match(items, clean)
     if best_item is None or best_sim < 0.5:
         return False, {"error": f"no good title match (best similarity: {best_sim:.1%})"}
 
@@ -373,16 +382,7 @@ def search_semantic_scholar(
     if not data or not data.get("data"):
         return False, {"error": "no results from Semantic Scholar"}
 
-    # Find best match by title similarity
-    best_sim = 0.0
-    best_paper = None
-    for paper in data["data"]:
-        s2_title = paper.get("title", "")
-        sim = title_similarity(clean, s2_title)
-        if sim > best_sim:
-            best_sim = sim
-            best_paper = paper
-
+    best_paper, best_sim = _best_title_match(data["data"], clean)
     if best_paper is None or best_sim < 0.5:
         return False, {"error": f"no good title match (best similarity: {best_sim:.1%})"}
 
@@ -461,7 +461,6 @@ def parse_bib_authors(bib_author: str) -> List[str]:
 
 def _strip_diacritics(s: str) -> str:
     """Remove diacritics: ü→u, ç→c, ö→o, etc."""
-    import unicodedata
     nfkd = unicodedata.normalize("NFKD", s)
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
@@ -626,7 +625,7 @@ class BibtexCitationVerifier:
 
     # Status constants
     VERIFIED = "VERIFIED"
-    S2_VERIFIED = "S2_VERIFIED"
+    EXT_VERIFIED = "EXT_VERIFIED"
     URL_VERIFIED = "URL_VERIFIED"
     SUSPICIOUS = "SUSPICIOUS"
     UNVERIFIED = "UNVERIFIED"
@@ -859,9 +858,13 @@ class BibtexCitationVerifier:
                 self._out(f"    URL   : (none)")
 
             # 4d. External API cross-verification (Crossref primary, S2 fallback)
+            # Skip if DOI already verified cleanly — no need to burn API calls
             result["ext_verified"] = False
             result["ext_metadata"] = {}
-            if title:
+            doi_clean = result["doi_verified"] and not any(
+                "mismatch" in i.lower() for i in result["issues"]
+            )
+            if title and not doi_clean:
                 self._out(f"    API   : Searching Crossref ...")
                 found, ext_meta = search_external(
                     title, enable_s2=self.enable_s2, s2_api_key=self.s2_api_key,
@@ -939,7 +942,7 @@ class BibtexCitationVerifier:
             elif result["ext_verified"] and not any(
                 "mismatch" in i.lower() for i in result["issues"]
             ):
-                result["status"] = self.S2_VERIFIED  # reuse constant for ext-verified
+                result["status"] = self.EXT_VERIFIED  # reuse constant for ext-verified
 
             # Downgrade to SUSPICIOUS if any mismatch found (even with DOI/ext)
             if any("mismatch" in i.lower() for i in result["issues"]):
@@ -953,7 +956,7 @@ class BibtexCitationVerifier:
 
             status_display = {
                 self.VERIFIED: "VERIFIED (DOI)",
-                self.S2_VERIFIED: f"VERIFIED ({ext_label})",
+                self.EXT_VERIFIED: f"VERIFIED ({ext_label})",
                 self.URL_VERIFIED: "VERIFIED (URL)",
                 self.SUSPICIOUS: "SUSPICIOUS",
                 self.UNVERIFIED: "UNVERIFIED",
@@ -972,7 +975,7 @@ class BibtexCitationVerifier:
         self._out()
 
         verified = [k for k, r in self.results.items() if r["status"] == self.VERIFIED]
-        ext_verified = [k for k, r in self.results.items() if r["status"] == self.S2_VERIFIED]
+        ext_verified = [k for k, r in self.results.items() if r["status"] == self.EXT_VERIFIED]
         url_verified = [k for k, r in self.results.items() if r["status"] == self.URL_VERIFIED]
         suspicious = [k for k, r in self.results.items() if r["status"] == self.SUSPICIOUS]
         unverified = [k for k, r in self.results.items() if r["status"] == self.UNVERIFIED]
