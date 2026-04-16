@@ -31,7 +31,7 @@ When you're stuck, type **`major revision`**. Rev2Agent convenes a discussion pa
 - `major revision` command convenes GPT, Gemini, and Claude to debate research decisions
 - External model cross-checks experiment code logic before you spend GPU hours on it
 - Every manuscript claim is tagged as fact, synthesis, or common knowledge -- no vague "studies show..."
-- Every BibTeX entry is verified against DBLP/Semantic Scholar (LLMs fabricate ~30% of citations)
+- Every BibTeX entry is verified against Crossref/DBLP/Semantic Scholar (LLMs fabricate ~30% of citations)
 - 5 AI reviewers with distinct personas critique the final draft before you submit
 
 ## Phase Flow
@@ -131,7 +131,11 @@ rev2agent/
 │   ├── 06_result_analysis.md    # Phase 6: Result analysis
 │   ├── 07_manuscript_writing.md # Phase 7: Manuscript writing
 │   └── 08_manuscript_review.md  # Phase 8: Review panel
-├── scripts/                     # Shared validation scripts
+├── scripts/                     # Shared validation & analysis scripts
+│   ├── verify_citations_bibtex.py  # BibTeX + Crossref/S2 verification
+│   ├── collect_results.py          # Automated result table generation
+│   ├── source_evaluator.py         # Literature source credibility scoring
+│   └── validate_manuscript.py      # LaTeX cross-ref & placeholder checks
 └── .gitignore
 ```
 

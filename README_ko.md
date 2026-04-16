@@ -28,7 +28,7 @@
 - `major revision` 명령으로 외부 모델 + Claude가 함께 연구 방향 토론 (Phase 0에서 API 키 설정 필요)
 - 실험 코드를 실행하기 전에 외부 모델이 로직을 검증 (데이터 누수, split 오류 등)
 - 논문의 모든 수치는 결과 파일에서 직접 인용. "연구에 따르면..." 같은 출처 없는 표현 금지
-- BibTeX 엔트리를 DBLP/Semantic Scholar에서 대조 (LLM은 인용의 ~30%를 지어냄)
+- BibTeX 엔트리를 Crossref/DBLP/Semantic Scholar에서 대조 (LLM은 인용의 ~30%를 지어냄)
 - 5명의 AI 리뷰어가 각자 다른 관점에서 최종 원고를 심사
 
 ## 파이프라인 흐름
@@ -131,10 +131,11 @@ rev2agent/
 │   ├── 06_result_analysis.md
 │   ├── 07_manuscript_writing.md
 │   └── 08_manuscript_review.md
-├── scripts/               # 공유 인프라 스크립트
-│   ├── verify_citations_bibtex.py
-│   ├── source_evaluator.py
-│   └── validate_manuscript.py
+├── scripts/               # 공유 검증/분석 스크립트
+│   ├── verify_citations_bibtex.py  # BibTeX + Crossref/S2 교차 검증
+│   ├── collect_results.py          # 실험 결과 자동 수집 + 비교 테이블
+│   ├── source_evaluator.py         # 문헌 소스 신뢰도 평가
+│   └── validate_manuscript.py      # LaTeX 교차참조/플레이스홀더 검증
 └── {project_dir}/         # 프로젝트별 디렉토리 (자동 생성)
     ├── .research_state.json
     ├── research_roadmap.md

@@ -237,7 +237,7 @@ After all subagents return their sections but before integration, run these thre
 For EVERY entry in `references.bib`:
 
 1. **Search the web** for the paper using its title and first author.
-2. **Verify against an authoritative source** (DBLP, Semantic Scholar, ACM DL, IEEE Xplore, arXiv, or the publisher's website):
+2. **Verify against an authoritative source** (DBLP, Crossref, Semantic Scholar, ACM DL, IEEE Xplore, arXiv, or the publisher's website):
    - Title: exact match (including capitalization nuances)
    - Authors: all authors listed, names spelled correctly
    - Venue: correct conference/journal name, correct year
@@ -265,7 +265,7 @@ python scripts/validate_manuscript.py \
     --bib references.bib \
     --output {project_dir}/manuscript/validation_report.txt
 
-# 2. Verify BibTeX citations (DOI resolution + hallucination detection)
+# 2. Verify BibTeX citations (DOI + Crossref/S2 cross-check)
 python scripts/verify_citations_bibtex.py \
     --bib {project_dir}/manuscript/references.bib \
     --tex-dir {project_dir}/manuscript/sections/ \
@@ -275,9 +275,11 @@ python scripts/verify_citations_bibtex.py \
 grep -rn "NEEDS-VERIFICATION" {project_dir}/manuscript/sections/
 ```
 
+The citation verifier cross-checks against Crossref (primary) and Semantic Scholar (fallback) in addition to DOI resolution. Entries flagged as SUSPICIOUS due to author/year/venue mismatch are the most common LLM hallucination type (correct-sounding title, wrong metadata) and MUST be manually corrected.
+
 **Quality gates:**
 - `validate_manuscript.py` must report 0 errors (warnings are acceptable)
-- `verify_citations_bibtex.py` must report 0 suspicious entries with DOI mismatches
+- `verify_citations_bibtex.py` must report 0 SUSPICIOUS entries (DOI mismatches, Crossref/S2 author/year/venue mismatches)
 - No remaining `NEEDS-VERIFICATION` flags (all must be resolved)
 
 If any gate fails:

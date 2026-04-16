@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from urllib import request, error
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 
 # ---------------------------------------------------------------------------
@@ -43,8 +43,9 @@ _ENTRY_START_RE = re.compile(
 )
 
 # Regex to extract a field:  fieldname = {value}  or  fieldname = "value"  or  fieldname = number
+# Supports up to 3 levels of brace nesting (needed for LaTeX accents like {\"{u}})
 _FIELD_RE = re.compile(
-    r"(\w+)\s*=\s*(?:\{((?:[^{}]|\{[^{}]*\})*)\}|\"([^\"]*)\"|(\d+))",
+    r"(\w+)\s*=\s*(?:\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}|\"([^\"]*)\"|(\d+))",
     re.DOTALL,
 )
 
@@ -213,7 +214,10 @@ def verify_url(url: str) -> Tuple[bool, str]:
 
 def title_similarity(t1: str, t2: str) -> float:
     """
-    Jaccard similarity on lowercased word sets (punctuation stripped).
+    Similarity on lowercased word sets (punctuation stripped).
+    Uses max(Jaccard, containment) to handle cases where one title
+    is a substring/abbreviation of the other (e.g., DOI returns
+    "Shredder" instead of "Shredder: Learning Noise Distributions...").
     Returns 0.0 -- 1.0.
     """
     def normalize(s: str) -> Set[str]:
@@ -223,7 +227,286 @@ def title_similarity(t1: str, t2: str) -> float:
     w1, w2 = normalize(t1), normalize(t2)
     if not w1 or not w2:
         return 0.0
-    return len(w1 & w2) / len(w1 | w2)
+    intersection = len(w1 & w2)
+    jaccard = intersection / len(w1 | w2)
+    # Containment: fraction of the SMALLER set that appears in the larger
+    containment = intersection / min(len(w1), len(w2))
+    return max(jaccard, containment)
+
+
+# ---------------------------------------------------------------------------
+# Crossref Lookup (primary — 50 req/sec, no API key needed)
+# ---------------------------------------------------------------------------
+
+CROSSREF_API_BASE = "https://api.crossref.org/works"
+
+
+def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None,
+                   retries: int = 3) -> Optional[Dict]:
+    """Generic HTTP GET returning parsed JSON, with retry on 429."""
+    for attempt in range(retries):
+        req = request.Request(url)
+        req.add_header("User-Agent", "BibTeX-Citation-Verifier/2.0 (mailto:verify@example.com)")
+        if headers:
+            for k, v in headers.items():
+                req.add_header(k, v)
+        try:
+            with request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                wait = 3 * (attempt + 1)
+                time.sleep(wait)
+                continue
+            return None
+        except (error.URLError, Exception):
+            return None
+    return None
+
+
+def _clean_latex_title(title: str) -> str:
+    """Strip LaTeX markup from a title for search queries."""
+    clean = re.sub(r"\\[a-zA-Z]+\{([^}]*)\}", r"\1", title)
+    clean = re.sub(r"[{}]", "", clean).strip()
+    return clean
+
+
+def search_crossref(title: str) -> Tuple[bool, Dict]:
+    """
+    Search Crossref by bibliographic query. Return the best title match.
+
+    Rate limit: 50 req/sec in polite pool (identified by User-Agent with mailto:).
+    Returns (found, metadata_dict) with source="crossref".
+    """
+    clean = _clean_latex_title(title)
+    if not clean:
+        return False, {"error": "empty title after cleanup"}
+
+    params = urlencode({"query.bibliographic": clean, "rows": "5",
+                        "select": "title,author,published-print,published-online,"
+                                  "container-title,DOI,type"})
+    url = f"{CROSSREF_API_BASE}?{params}"
+
+    data = _http_get_json(url)
+    if not data or "message" not in data:
+        return False, {"error": "no response from Crossref"}
+
+    items = data["message"].get("items", [])
+    if not items:
+        return False, {"error": "no results from Crossref"}
+
+    # Find best match by title similarity
+    best_sim = 0.0
+    best_item = None
+    for item in items:
+        cr_titles = item.get("title", [])
+        cr_title = cr_titles[0] if cr_titles else ""
+        sim = title_similarity(clean, cr_title)
+        if sim > best_sim:
+            best_sim = sim
+            best_item = item
+
+    if best_item is None or best_sim < 0.5:
+        return False, {"error": f"no good title match (best similarity: {best_sim:.1%})"}
+
+    # Extract authors
+    authors = []
+    for a in best_item.get("author", []):
+        name = f"{a.get('given', '')} {a.get('family', '')}".strip()
+        if name:
+            authors.append(name)
+
+    # Extract year from published-print or published-online
+    year = None
+    for date_field in ("published-print", "published-online"):
+        date_parts = best_item.get(date_field, {}).get("date-parts", [[None]])
+        if date_parts and date_parts[0] and date_parts[0][0]:
+            year = date_parts[0][0]
+            break
+
+    # Extract venue
+    containers = best_item.get("container-title", [])
+    venue = containers[0] if containers else ""
+
+    cr_titles = best_item.get("title", [])
+    return True, {
+        "title": cr_titles[0] if cr_titles else "",
+        "authors": authors,
+        "year": year,
+        "venue": venue,
+        "doi": best_item.get("DOI", ""),
+        "source": "crossref",
+        "title_similarity": best_sim,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Semantic Scholar Lookup (fallback — 100 req/5min, restrictive)
+# ---------------------------------------------------------------------------
+
+S2_API_BASE = "https://api.semanticscholar.org/graph/v1/paper"
+S2_SEARCH_FIELDS = "title,authors,year,venue,externalIds"
+
+
+def search_semantic_scholar(
+    title: str, api_key: Optional[str] = None
+) -> Tuple[bool, Dict]:
+    """
+    Search Semantic Scholar by title. Return the best match.
+    Used as fallback when Crossref returns no results.
+
+    Free tier: 100 requests / 5 minutes (no API key needed).
+    Returns (found, metadata_dict) with source="s2".
+    """
+    clean = _clean_latex_title(title)
+    if not clean:
+        return False, {"error": "empty title after cleanup"}
+
+    params = urlencode({"query": clean, "limit": "5", "fields": S2_SEARCH_FIELDS})
+    url = f"{S2_API_BASE}/search?{params}"
+
+    headers = {}
+    if api_key:
+        headers["x-api-key"] = api_key
+
+    data = _http_get_json(url, headers=headers)
+    if not data or not data.get("data"):
+        return False, {"error": "no results from Semantic Scholar"}
+
+    # Find best match by title similarity
+    best_sim = 0.0
+    best_paper = None
+    for paper in data["data"]:
+        s2_title = paper.get("title", "")
+        sim = title_similarity(clean, s2_title)
+        if sim > best_sim:
+            best_sim = sim
+            best_paper = paper
+
+    if best_paper is None or best_sim < 0.5:
+        return False, {"error": f"no good title match (best similarity: {best_sim:.1%})"}
+
+    authors = [a.get("name", "") for a in best_paper.get("authors", [])]
+    return True, {
+        "title": best_paper.get("title", ""),
+        "authors": authors,
+        "year": best_paper.get("year"),
+        "venue": best_paper.get("venue", ""),
+        "doi": best_paper.get("externalIds", {}).get("DOI", ""),
+        "source": "s2",
+        "title_similarity": best_sim,
+    }
+
+
+def search_external(title: str, enable_s2: bool = True,
+                    s2_api_key: Optional[str] = None,
+                    bib_author: str = "") -> Tuple[bool, Dict]:
+    """
+    Search for a paper by title. Crossref first, S2 as fallback.
+    Returns (found, metadata_dict). metadata["source"] indicates which API matched.
+
+    If bib_author is provided, a Crossref match with 0% author overlap is rejected
+    (likely a different paper with a similar title) and S2 is tried instead.
+    """
+    found, meta = search_crossref(title)
+    if found and bib_author and meta.get("authors"):
+        # Validate: reject if zero author overlap (wrong paper)
+        bib_lasts = set(parse_bib_authors(bib_author))
+        api_lasts = set(parse_s2_authors(meta["authors"]))
+        if bib_lasts and api_lasts and len(bib_lasts & api_lasts) == 0:
+            # No author overlap — likely wrong paper, try S2
+            found = False
+            meta["error"] = "Crossref match rejected (0% author overlap)"
+    if found:
+        return found, meta
+
+    if enable_s2:
+        time.sleep(3.0)  # conservative rate limit for S2
+        return search_semantic_scholar(title, s2_api_key)
+
+    return False, meta  # return Crossref's error
+
+
+def parse_bib_authors(bib_author: str) -> List[str]:
+    """
+    Parse BibTeX author field into a list of normalized last names.
+
+    Handles formats:
+      "Last, First and Last, First"
+      "First Last and First Last"
+      "Last, First Middle and Last, First"
+    """
+    if not bib_author:
+        return []
+    # Split on " and " (BibTeX author separator)
+    parts = re.split(r"\s+and\s+", bib_author, flags=re.IGNORECASE)
+    last_names = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        # Strip LaTeX accents: {\"o} -> o, {\c{c}} -> c, etc.
+        part = re.sub(r"\{?\\['\"`~^=.cuvHtdb]\{?(\w)\}?\}?", r"\1", part)
+        part = re.sub(r"[{}]", "", part)
+        if "," in part:
+            # "Last, First" format
+            last = part.split(",")[0].strip()
+        else:
+            # "First Last" format — last word is the last name
+            words = part.split()
+            last = words[-1] if words else part
+        last_names.append(last.lower().strip())
+    return last_names
+
+
+def _strip_diacritics(s: str) -> str:
+    """Remove diacritics: ü→u, ç→c, ö→o, etc."""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def parse_s2_authors(s2_authors: List[str]) -> List[str]:
+    """Extract normalized last names from external API author name list."""
+    last_names = []
+    for name in s2_authors:
+        name = name.strip()
+        if not name:
+            continue
+        words = name.split()
+        last = words[-1].lower() if words else name.lower()
+        last_names.append(_strip_diacritics(last))
+    return last_names
+
+
+def author_similarity(bib_author: str, s2_authors: List[str]) -> Tuple[float, List[str]]:
+    """
+    Compare BibTeX author string against S2 author list.
+
+    Returns (similarity_score, list_of_mismatches).
+    Similarity is Jaccard on last-name sets.
+    """
+    bib_lasts = set(parse_bib_authors(bib_author))
+    s2_lasts = set(parse_s2_authors(s2_authors))
+
+    if not bib_lasts and not s2_lasts:
+        return 1.0, []
+    if not bib_lasts or not s2_lasts:
+        return 0.0, [f"bib={list(bib_lasts)}, s2={list(s2_lasts)}"]
+
+    intersection = bib_lasts & s2_lasts
+    union = bib_lasts | s2_lasts
+    sim = len(intersection) / len(union) if union else 0.0
+
+    mismatches = []
+    only_bib = bib_lasts - s2_lasts
+    only_s2 = s2_lasts - bib_lasts
+    if only_bib:
+        mismatches.append(f"in bib only: {sorted(only_bib)}")
+    if only_s2:
+        mismatches.append(f"in S2 only: {sorted(only_s2)}")
+
+    return sim, mismatches
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +626,7 @@ class BibtexCitationVerifier:
 
     # Status constants
     VERIFIED = "VERIFIED"
+    S2_VERIFIED = "S2_VERIFIED"
     URL_VERIFIED = "URL_VERIFIED"
     SUSPICIOUS = "SUSPICIOUS"
     UNVERIFIED = "UNVERIFIED"
@@ -353,11 +637,15 @@ class BibtexCitationVerifier:
         tex_dir: Path,
         strict: bool = False,
         output_path: Optional[Path] = None,
+        enable_s2: bool = True,
+        s2_api_key: Optional[str] = None,
     ):
         self.bib_path = bib_path
         self.tex_dir = tex_dir
         self.strict = strict
         self.output_path = output_path
+        self.enable_s2 = enable_s2
+        self.s2_api_key = s2_api_key
 
         # Will be populated during verification
         self.entries: Dict[str, Dict[str, str]] = {}
@@ -570,21 +858,94 @@ class BibtexCitationVerifier:
             else:
                 self._out(f"    URL   : (none)")
 
-            # 4d. Determine final status
-            # If hallucination issues were found but DOI verified cleanly, trust DOI
+            # 4d. External API cross-verification (Crossref primary, S2 fallback)
+            result["ext_verified"] = False
+            result["ext_metadata"] = {}
+            if title:
+                self._out(f"    API   : Searching Crossref ...")
+                found, ext_meta = search_external(
+                    title, enable_s2=self.enable_s2, s2_api_key=self.s2_api_key,
+                    bib_author=fields.get("author", ""),
+                )
+                src = ext_meta.get("source", "?")
+                src_label = "Crossref" if src == "crossref" else "S2"
+
+                if found:
+                    result["ext_metadata"] = ext_meta
+                    sim_pct = ext_meta.get("title_similarity", 0)
+                    self._out(f"    {src_label:8s}: Match found (title similarity: {sim_pct:.0%})")
+                    self._out(f"    {src_label:8s}: \"{ext_meta.get('title', '')[:70]}\"")
+
+                    # Author cross-check
+                    author = fields.get("author", "")
+                    ext_authors = ext_meta.get("authors", [])
+                    if author and ext_authors:
+                        auth_sim, auth_mismatches = author_similarity(author, ext_authors)
+                        self._out(f"    {src_label} authors: similarity {auth_sim:.0%}")
+                        if auth_sim < 0.5:
+                            issue = f"Author mismatch ({src_label}): {'; '.join(auth_mismatches)}"
+                            result["issues"].append(issue)
+                            self._out(f"    [!] {issue}")
+
+                    # Year cross-check
+                    ext_year = ext_meta.get("year")
+                    bib_year_str = fields.get("year", "")
+                    if bib_year_str and ext_year:
+                        try:
+                            if int(bib_year_str) != int(ext_year):
+                                issue = f"Year mismatch ({src_label}): bib={bib_year_str}, {src_label}={ext_year}"
+                                result["issues"].append(issue)
+                                self._out(f"    [!] {issue}")
+                        except (ValueError, TypeError):
+                            pass
+
+                    # Venue cross-check
+                    ext_venue = ext_meta.get("venue", "")
+                    bib_venue = fields.get("booktitle", "") or fields.get("journal", "")
+                    if ext_venue and bib_venue:
+                        venue_sim = title_similarity(bib_venue, ext_venue)
+                        self._out(f"    {src_label} venue: \"{ext_venue}\" (similarity: {venue_sim:.0%})")
+                        if venue_sim < 0.3:
+                            issue = (
+                                f"Venue mismatch ({src_label}): "
+                                f"bib=\"{bib_venue[:50]}\", {src_label}=\"{ext_venue[:50]}\""
+                            )
+                            result["issues"].append(issue)
+                            self._out(f"    [!] {issue}")
+
+                    # Ext verified if no mismatch issues from this step
+                    ext_issues = [i for i in result["issues"]
+                                  if "(Crossref)" in i or "(S2)" in i]
+                    if not ext_issues:
+                        result["ext_verified"] = True
+                else:
+                    err = ext_meta.get("error", "unknown")
+                    self._out(f"    API   : {err}")
+
+            # 4e. Determine final status
+            # Priority: DOI > External API (Crossref/S2) > URL > pattern-based
+            ext_src = result.get("ext_metadata", {}).get("source", "s2")
+            ext_label = "Crossref" if ext_src == "crossref" else "Semantic Scholar"
+
             if result["doi_verified"] and not any(
                 "mismatch" in i.lower() for i in result["issues"]
             ):
-                # DOI verification overrides pattern-based suspicion
-                # (except for metadata mismatches which indicate real problems)
                 has_only_soft_issues = all(
                     "No DOI" in i or "cannot independently" in i
                     for i in result["issues"]
                 )
                 if has_only_soft_issues or not result["issues"]:
                     result["status"] = self.VERIFIED
+            elif result["ext_verified"] and not any(
+                "mismatch" in i.lower() for i in result["issues"]
+            ):
+                result["status"] = self.S2_VERIFIED  # reuse constant for ext-verified
 
-            if not result["doi_verified"] and not result["url_verified"]:
+            # Downgrade to SUSPICIOUS if any mismatch found (even with DOI/ext)
+            if any("mismatch" in i.lower() for i in result["issues"]):
+                result["status"] = self.SUSPICIOUS
+
+            if not result["doi_verified"] and not result["url_verified"] and not result["ext_verified"]:
                 if result["issues"]:
                     result["status"] = self.SUSPICIOUS
                 else:
@@ -592,6 +953,7 @@ class BibtexCitationVerifier:
 
             status_display = {
                 self.VERIFIED: "VERIFIED (DOI)",
+                self.S2_VERIFIED: f"VERIFIED ({ext_label})",
                 self.URL_VERIFIED: "VERIFIED (URL)",
                 self.SUSPICIOUS: "SUSPICIOUS",
                 self.UNVERIFIED: "UNVERIFIED",
@@ -610,13 +972,21 @@ class BibtexCitationVerifier:
         self._out()
 
         verified = [k for k, r in self.results.items() if r["status"] == self.VERIFIED]
+        ext_verified = [k for k, r in self.results.items() if r["status"] == self.S2_VERIFIED]
         url_verified = [k for k, r in self.results.items() if r["status"] == self.URL_VERIFIED]
         suspicious = [k for k, r in self.results.items() if r["status"] == self.SUSPICIOUS]
         unverified = [k for k, r in self.results.items() if r["status"] == self.UNVERIFIED]
 
+        # Count by source for ext-verified
+        cr_count = sum(1 for k in ext_verified
+                       if self.results[k].get("ext_metadata", {}).get("source") == "crossref")
+        s2_count = len(ext_verified) - cr_count
+
         total = len(self.results)
         self._out(f"  Total .bib entries   : {total}")
         self._out(f"  DOI verified         : {len(verified)}")
+        self._out(f"  Crossref verified    : {cr_count}")
+        self._out(f"  S2 verified          : {s2_count}")
         self._out(f"  URL verified         : {len(url_verified)}")
         self._out(f"  Suspicious           : {len(suspicious)}")
         self._out(f"  Unverified           : {len(unverified)}")
@@ -676,7 +1046,7 @@ class BibtexCitationVerifier:
             reasons.append(f"{len(unverified)} unverified entry/entries (strict mode)")
             failed = True
 
-        total_ok = len(verified) + len(url_verified)
+        total_ok = len(verified) + len(ext_verified) + len(url_verified)
         if total > 0 and total_ok / total < 0.5 and not self.strict:
             reasons.append(f"Less than 50% of entries verified ({total_ok}/{total})")
             # Warning, but not a hard fail in non-strict mode
@@ -761,6 +1131,17 @@ Requires only Python 3.10+ stdlib. No external packages needed.
         default=None,
         help="Save verification report to this file path",
     )
+    parser.add_argument(
+        "--no-s2",
+        action="store_true",
+        help="Disable Semantic Scholar lookup (for offline use)",
+    )
+    parser.add_argument(
+        "--s2-key",
+        type=str,
+        default=None,
+        help="Semantic Scholar API key (optional, relaxes rate limits)",
+    )
 
     args = parser.parse_args()
 
@@ -781,6 +1162,8 @@ Requires only Python 3.10+ stdlib. No external packages needed.
         tex_dir=tex_dir,
         strict=args.strict,
         output_path=output_path,
+        enable_s2=not args.no_s2,
+        s2_api_key=args.s2_key,
     )
 
     passed = verifier.run()

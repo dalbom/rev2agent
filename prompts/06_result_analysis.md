@@ -13,23 +13,33 @@ Analyze experiment results, generate tables and figures, perform statistical tes
 
 ## Steps
 
-### 6.1 Result Collection
+### 6.1 Result Collection (Automated)
 
-Read all result files and compile into a single summary:
+**DO NOT manually read result files and construct tables from memory.**
 
-```python
-# Pseudocode for what the analysis script should do
-for each experiment_id:
-    for each seed:
-        read {project_dir}/experiment/results/{exp_id}_seed{N}/eval_results.json
-        collect metrics
+Run the automated collection script FIRST:
 
-compute mean, std across seeds for each experiment
+```bash
+python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+    --output-md {project_dir}/experiment/results/comparison_table.md \
+    --output-json {project_dir}/experiment/results/comparison_table.json
+```
+
+Then read `comparison_table.md` and use it as the **sole source** for all numerical claims in this phase. If a number does not appear in the generated table, it does not exist — do not cite metrics from memory or from a quick glance at a JSON file.
+
+If the script reports warnings (missing `_meta`, unparseable files), fix those files before proceeding.
+
+To focus on specific metrics, use `--metric-keys`:
+```bash
+python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+    --metric-keys cls_auc,recon_ssim,verif_auc \
+    --output-md {project_dir}/experiment/results/comparison_table.md \
+    --output-json {project_dir}/experiment/results/comparison_table.json
 ```
 
 ### 6.2 Main Results Table
 
-Create the primary comparison table:
+Create the primary comparison table using numbers from `comparison_table.md` (generated in 6.1):
 
 ```
 Table 1: Main Results on [Dataset]
@@ -42,6 +52,11 @@ Method B [ref]  | 73.8 ± 0.3    | 46.5 ± 0.2    | 32
 Ours            | 76.2 ± 0.3    | 49.3 ± 0.4    | 29
 ─────────────────────────────────────────────────────
 ```
+
+**Provenance rule:** Every number in sections 6.2-6.7 must trace to a specific entry in `comparison_table.json`. When writing `phase6_results.md`, include the source file path for each claim:
+
+> mIoU improved from 72.3±0.4 (baseline, `round1_seed*/eval.json`)
+> to 76.2±0.3 (ours, `round1_seed*/eval.json`)
 
 ### 6.3 Ablation Study Table
 
