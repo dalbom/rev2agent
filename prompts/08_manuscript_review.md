@@ -22,6 +22,21 @@ Launch **5 reviewer agents** (via Task tool, `subagent_type=general-purpose`) in
 | **D** | Skeptical Reader / Novelty Critic | Logical gaps, overclaiming, spin detection, novelty assessment, contribution significance, alternative explanations, ethics (if venue requires) |
 | **E** | Writing & Presentation Specialist | Clarity, structure, redundancy, figure/table effectiveness, notation consistency, abstract-intro-conclusion alignment |
 
+## Reviewer Independence Protocol
+
+When Phase 8 re-runs (revision loop after a previous review cycle), each reviewer agent MUST start with fresh context:
+
+1. **Do NOT include** previous review files (`manuscript/reviews/reviewer_*.md`) in the reviewer's spawn prompt.
+2. **Do NOT include** `review_synthesis.md` or `review_response.md` from prior rounds.
+3. Each reviewer receives ONLY:
+   - The current manuscript files (`main.tex` + `sections/`)
+   - `references.bib`
+   - The context files listed in "Common Instructions for All Reviewers" below
+   - Their persona description and rubric
+4. The **Editor-in-Chief MAY reference** prior reviews during synthesis (to check whether previously raised issues were addressed), but individual reviewers must not see them.
+
+This prevents anchoring bias where reviewers fixate on issues they previously raised rather than evaluating the manuscript on its current merits.
+
 ## Reviewer Instructions Template
 
 Each reviewer agent receives:
@@ -35,6 +50,7 @@ Each reviewer agent receives:
 
 ```
 You are reviewing an academic manuscript for [{target_venue}].
+You have NOT seen any prior review of this manuscript. Evaluate it fresh.
 
 READ ALL of the following files carefully before writing your review:
 - {project_dir}/manuscript/main.tex (or all .tex files if split into sections/)
