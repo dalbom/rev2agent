@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-04-19]
+
+### Added
+- Phase 2 self-critique & gap-fill loop: after initial literature synthesis, the lead agent identifies coverage gaps (claims with <3 sources, missing subfields) and spawns targeted agents to fill them (up to 2 iterations)
+- Reviewer Independence Protocol in Phase 8: when the review panel re-runs after revisions, each reviewer starts with fresh context (no prior reviews, synthesis, or response docs) to prevent anchoring bias
+
+### Fixed
+- Phase routing inconsistency: added explicit 5th path for Phase 6 → Phase 5 direct skip when next round needs identical config (just more seeds), resolving mismatch between `CLAUDE.md` diagram and `06_result_analysis.md` routing logic
+
 ## [2026-04-17]
 
 ### Added

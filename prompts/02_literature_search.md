@@ -188,6 +188,39 @@ After all agents complete and the lead has read their output files, the lead sho
 4. **Rank** directions by total score (now out of 25 instead of 20).
 5. **Recommend** the top 2-3 directions to the user.
 
+## Self-Critique & Gap-Fill Loop
+
+After the initial synthesis above, the lead performs up to **2 refinement iterations** to strengthen coverage before presenting to the user.
+
+### Iteration Protocol
+
+For each iteration (max 2):
+
+1. **Gap identification**: Review the synthesis and ask:
+   - Which claims in the synthesis lack 3+ supporting sources?
+   - Are there obvious subfields or methodologies not represented?
+   - Are the credibility scores skewed (e.g., all sources from one research group)?
+   - Are there key papers frequently cited BY the found papers that we haven't reviewed?
+
+2. **Targeted search**: For each identified gap, spawn 1-2 targeted Agent subagents:
+   ```
+   Task: Fill literature gap on [specific subtopic]
+   Context: Our synthesis currently lacks coverage of [gap description].
+   The following papers reference this area but we have no primary sources: [list]
+   Search for: 3-5 papers specifically addressing [gap]
+   Output: {project_dir}/literature/gap_fill_iter{N}_{topic_slug}.md
+   ```
+
+3. **Re-synthesize**: Integrate the new findings into the synthesis. Update direction scores if new sources change the evidence strength.
+
+4. **Exit conditions** (stop iterating if ANY is true):
+   a. All claims in the synthesis have 3+ supporting sources
+   b. 2 iterations completed
+   c. The gap-fill agents returned no new relevant papers
+   d. FFS time limit has been reached
+
+Record the number of self-critique iterations performed (0, 1, or 2) in `phase2_literature.md`.
+
 ## Output to User
 
 Present a structured summary:

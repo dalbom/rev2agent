@@ -112,10 +112,13 @@ Phase 4 (design) → Phase 5 (execute) → Phase 6 (analyze + plan next)
     |   ┌────────────────────────────────────┘
     |   ├── results sufficient → Phase 7 (manuscript) → Phase 8 (review)
     |   ├── more experiments needed (framing OK) → Phase 4 (sub_step: null)
+    |   ├── more experiments needed (identical config) → Phase 5 (skip Phase 4)
     |   ├── fundamental reframing needed → Phase 4 (sub_step: "refinement")
     |   └── approach failed entirely → Phase 3 (new research plan)
     └────────────────────────────────────────┘
 ```
+
+**Phase 5 direct skip:** When Phase 6 determines that the next round requires NO design changes (identical config, just additional seeds or repetitions), it may route directly to Phase 5, skipping Phase 4. This is the only valid case for skipping Phase 4. The skip must be noted in `phase_history`.
 
 **`sub_step` field:** When Phase 6 routes back to Phase 4, it sets `sub_step` to indicate the mode:
 - `null` — Normal experiment design for the next round
