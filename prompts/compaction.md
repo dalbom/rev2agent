@@ -1,10 +1,14 @@
-# Compaction at Phase Boundaries
+# New Session at Phase Boundaries
 
-Because all phase outputs are persisted to files (`.research_state.json`, `summaries/`, `research_roadmap.md`, experiment results), the conversation history becomes largely disposable at phase boundaries. Recommending `/compact` at these points reduces context pressure for long projects and prevents auto-compaction from firing at an awkward mid-task moment.
+Because all phase outputs are persisted to files (`.research_state.json`, `summaries/`, `research_roadmap.md`, experiment results), the conversation history is fully reconstructable from disk. Starting a new session at phase boundaries is preferred over `/compact` because:
+
+1. **No information loss** — new session reads state files directly, while `/compact` summarizes (lossy).
+2. **No token cost** — `/compact` consumes tokens to generate a summary. A new session only reads the files it needs.
+3. **Clean context** — no accumulated noise from previous phases.
 
 ## When to Recommend
 
-**Recommend `/compact` before proceeding when ALL of these are true:**
+**Recommend starting a new session before proceeding when ALL of these are true:**
 1. The current phase's summary file(s) have been written.
 2. `.research_state.json` is updated.
 3. `research_roadmap.md` is updated (Phase 5/6 only).
@@ -22,19 +26,19 @@ Almost always recommend at these boundaries:
 
 ## Skip for Lightweight Transitions
 
-Skip at 1→2, 3→4, 4→5, 8→7: the conversation is short and the compact cost is not justified.
+Skip at 1→2, 3→4, 4→5, 8→7: the conversation is short and starting a new session is not justified.
 
 ## How to Recommend
 
-`/compact` is a Claude Code built-in slash command that only the user can trigger — the agent cannot run it directly. At a qualifying transition, fold the recommendation into the existing confirmation prompt:
+At a qualifying transition, fold the recommendation into the existing confirmation prompt:
 
 > Phase N complete. Summary, state, and roadmap are written.
-> This phase accumulated large tool results — **recommend running `/compact` before proceeding to Phase N+1.**
-> Either run `/compact` and then say "continue", or say "continue" to proceed without compacting.
+> This phase accumulated large tool results — **recommend starting a new session** before Phase N+1.
+> Run `claude` again and say "continue [project_name]", or say "continue" here to proceed in this session.
 
-After compact, the agent re-orients from the state files and then proceeds to read the next phase's prompt.
+The new session will follow the Startup Protocol, detect the project, read `.research_state.json`, and resume at the correct phase.
 
-## Never Recommend Compact
+## Never Recommend New Session
 
 - Mid-phase (in-flight tool calls, partial state)
 - When a debugging thread is active (user is investigating an anomaly)
