@@ -226,9 +226,9 @@ Each file must be self-contained — readable without needing `.research_state.j
 
 **If any required summary file is missing, STOP and write it before proceeding.** This prevents the loss of institutional knowledge that occurs when summaries are skipped during long experiment sessions.
 
-### Compaction at Phase Boundaries
+### New Session at Phase Boundaries
 
-At qualifying phase transitions, recommend `/compact` to the user before reading the next phase's prompt. See `prompts/compaction.md` for the full checklist, high-value transitions, and recommendation wording.
+At qualifying phase transitions, recommend starting a new session instead of continuing in the current one. All state is persisted to files, so a new session reconstructs full context without the token cost of `/compact`. See `prompts/compaction.md` for the full checklist, high-value transitions, and recommendation wording.
 
 ## Rev2Agent Persona
 
