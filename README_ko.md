@@ -81,13 +81,13 @@ curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
 
 ## 빠른 시작
 
-```bash
-git clone https://github.com/dalbom/rev2agent.git
-cd rev2agent
-claude
-```
+자세한 설치 방법은 **[INSTALL.md](INSTALL.md)**를 참고하세요.
 
-처음 실행하면 Phase 0에서 API 키를 설정합니다. 키를 붙여넣으면 자동 인식됩니다. 설정이 끝나면 연구 주제를 이야기하면 됩니다.
+Claude Code를 열고 아래 프롬프트를 붙여넣으세요:
+
+> Clone https://github.com/dalbom/rev2agent and set it up as my working directory. Then follow the CLAUDE.md startup protocol.
+
+나머지는 Rev2Agent가 안내합니다.
 
 ## 특수 명령어
 

@@ -84,13 +84,13 @@ curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
 
 ## Quick Start
 
-```bash
-git clone https://github.com/dalbom/rev2agent.git
-cd rev2agent
-claude
-```
+See **[INSTALL.md](INSTALL.md)** for detailed setup instructions (English + 한국어).
 
-That's it. Claude Code reads `CLAUDE.md` automatically and begins Phase 0 (setup) on first run.
+Open Claude Code and paste:
+
+> Clone https://github.com/dalbom/rev2agent and set it up as my working directory. Then follow the CLAUDE.md startup protocol.
+
+That's it. Rev2Agent handles the rest.
 
 ## Special Commands
 
