@@ -10,7 +10,7 @@
 지원되는 코딩 에이전트 호스트 하나가 필요합니다:
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- Codex
+- [Codex CLI](https://help.openai.com/en/articles/11096431-openai-codex-ci-getting-started)
 
 ### 시작하기
 
@@ -62,7 +62,7 @@ rev2agent 디렉토리를 Codex에서 열고 `AGENTS.md` 시작 프로토콜을 
 Install one supported coding agent host:
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- Codex
+- [Codex CLI](https://help.openai.com/en/articles/11096431-openai-codex-ci-getting-started)
 
 ## Getting Started
 
