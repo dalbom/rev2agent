@@ -20,12 +20,12 @@ Scripts that ONLY read pre-computed results from JSON/CSV and render them (pure 
 
 ### Step 1: Logical Flow Verification (External Model)
 
-Before running any experiment script, query an external model (configured in `.rev2agent_config.json`) to verify that the code correctly implements the intended experimental protocol. This catches methodology bugs that code review cannot — bugs where the code runs perfectly but tests the wrong thing. If no external model is configured, use a separate Claude agent with an explicit "adversarial reviewer" role.
+Before running any experiment script, query an external model (configured in `.rev2agent_config.json`) to verify that the code correctly implements the intended experimental protocol. This catches methodology bugs that code review cannot — bugs where the code runs perfectly but tests the wrong thing. If no external model is configured, use a separate host-native reviewer with an explicit "adversarial reviewer" role.
 
 **Show which model is performing the review:**
 ```
 Code Verification — [script_name.py]
-Reviewer: gpt-5.4 via OpenRouter  (or "Claude adversarial agent" if no external model)
+Reviewer: gpt-5.4 via OpenRouter  (or "host-native adversarial reviewer" if no external model)
 ```
 
 **Prompt template:**
@@ -52,9 +52,9 @@ Report: PASS (no logical issues) or FAIL (describe the issue).
 
 **If FAIL:** Fix the identified issue, re-verify. Do not proceed to Step 2 until PASS. **Maximum 5 attempts.** If still failing after 5 rounds, present the remaining issues to the user and ask for guidance.
 
-### Step 2: Code Quality Review (Simplify Skill)
+### Step 2: Code Quality Review (`code-quality-review` skill)
 
-After logical verification passes, apply the `simplify` skill for code quality: unused imports, duplication, variable shadowing, memory efficiency, magic numbers.
+After logical verification passes, apply the `code-quality-review` skill for code quality: unused imports, duplication, variable shadowing, memory efficiency, magic numbers.
 
 ### Step 3: Execution
 
@@ -340,7 +340,7 @@ Estimated total time: [X] hours on [GPU name]
    🚀 Experiments started (PID: XXXXX)
 
    You can safely close this session now.
-   When you come back, just run `claude` in this directory and I'll check on progress.
+   When you come back, start a new session in this directory and ask me to continue this project.
 
    Quick commands while I'm away:
      $ tail -f {project_dir}/experiment/logs/run.log        # watch live output

@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-04-21]
+
+### Added
+- Codex support via new root `AGENTS.md` entrypoint, alongside the existing `CLAUDE.md` entrypoint for Claude Code
+- Shared host-neutral wrapper skill names:
+  - `research-deep-dive`
+  - `code-quality-review`
+  - `writing-humanizer`
+- Explicit host-mapping guidance in both `AGENTS.md` and `CLAUDE.md` so the shared prompt set can target multiple agent hosts without duplicating phase behavior
+
+### Changed
+- Shared prompts now use host-neutral terminology for:
+  - wrapper skills
+  - host-native reviewers
+  - fresh-session recommendations
+- `prompts/00_setup.md` no longer assumes Anthropic is always redundant; same-provider API keys are now treated as host-dependent
+- `prompts/compaction.md` now describes fresh-session guidance generically instead of using Claude-specific `/compact` wording
+- `prompts/05_experiment_execution.md` resume instructions now refer to starting a new session in the repository instead of running `claude`
+- README, Korean README, and INSTALL docs now describe both Claude Code and Codex, with separate entrypoints and host-neutral review-panel wording
+
 ## [2026-04-19]
 
 ### Added

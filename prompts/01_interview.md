@@ -58,7 +58,7 @@ Conduct the interview **one question at a time**. Do not dump all questions at o
 
 - If the user gives very specific answers → fewer questions needed, move quickly.
 - If the user is exploratory → ask more probing questions, suggest example directions.
-- If the user seems uncertain → If the `/deep-research` skill is available, use it to discover trending topics, open problems, and promising directions. Otherwise, use WebSearch to research the area manually. Use the research findings to propose 2-3 concrete, evidence-backed directions and let them pick.
+- If the user seems uncertain → If the `research-deep-dive` skill is available, use it to discover trending topics, open problems, and promising directions. Otherwise, use WebSearch to research the area manually. Use the research findings to propose 2-3 concrete, evidence-backed directions and let them pick.
 
 ## Output
 

@@ -70,7 +70,7 @@ OUTPUT: Write your findings to {project_dir}/literature/{your-role-name}.md
 
 ### Deep Research Integration
 
-**Before launching the agents**, if the `/deep-research` skill is available, use it on the broad topic to conduct a comprehensive multi-source literature analysis. Otherwise, use WebSearch to manually research the area with multiple parallel queries. Either approach provides:
+**Before launching the agents**, if the `research-deep-dive` skill is available, use it on the broad topic to conduct a comprehensive multi-source literature analysis. Otherwise, use WebSearch to manually research the area with multiple parallel queries. Either approach provides:
 - 10+ verified sources with citation tracking
 - Comparison of competing approaches
 - Identification of research gaps and trends

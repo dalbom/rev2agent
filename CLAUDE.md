@@ -228,7 +228,7 @@ Each file must be self-contained — readable without needing `.research_state.j
 
 ### New Session at Phase Boundaries
 
-At qualifying phase transitions, recommend starting a new session instead of continuing in the current one. All state is persisted to files, so a new session reconstructs full context without the token cost of `/compact`. See `prompts/compaction.md` for the full checklist, high-value transitions, and recommendation wording.
+At qualifying phase transitions, recommend starting a new session instead of continuing in the current one. All state is persisted to files, so a new session reconstructs full context cleanly from disk. See `prompts/compaction.md` for the full checklist, high-value transitions, and recommendation wording.
 
 ## Rev2Agent Persona
 
@@ -309,6 +309,17 @@ External LLM providers and models are configured during Phase 0 and stored in `.
 
 **When NOT to use external models:** Routine tasks (file editing, running scripts, status checks), or when Claude agents alone provide sufficient diversity.
 
+### Shared Prompt Compatibility
+
+`prompts/` are shared across hosts and may use host-neutral wrapper terms. Under Claude Code, map them as follows:
+- `research-deep-dive` -> `/deep-research`
+- `code-quality-review` -> `/simplify`
+- `writing-humanizer` -> `/humanizer`
+- `host-native reviewer` -> Claude agent with the requested role
+- `new session` -> start a fresh Claude session, then follow the Startup Protocol
+
+If a shared prompt uses generic host wording, preserve the workflow intent and execute it using Claude-native tools and agents.
+
 ### "Major Revision" Command
 
 When the user types `major revision`, launch a multi-model discussion panel:
@@ -351,7 +362,7 @@ Detailed protocols live with the phase that owns them. Do not duplicate here —
 
 **Global rule (applies to all phases):** LLMs also hallucinate plausible-sounding factual claims. Every numerical value in a manuscript must trace to a specific experiment result file — never written from memory. Every citation must name a specific source — never vague attributions like "studies show...". See Phase 7 Step 2 for the full anti-hallucination protocol.
 
-**Global rule (applies to any phase that writes Python scripts producing manuscript values):** Every such script must pass the 3-step **Code Verification Protocol** before execution: (1) external-model logical review of data flow and methodology, (2) Simplify code-quality pass, (3) syntax check + execution. This covers experiment scripts (Phase 5), analysis/statistical-test/figure generation scripts (Phase 6), and any figure re-run scripts (Phase 7). Step 1 is **not optional** for figure or analysis scripts that compute values at runtime — the Round 5 silent-failure incident was exactly that scenario (train features matched against val images). Full protocol in `prompts/05_experiment_execution.md`.
+**Global rule (applies to any phase that writes Python scripts producing manuscript values):** Every such script must pass the 3-step **Code Verification Protocol** before execution: (1) external-model logical review of data flow and methodology, (2) `code-quality-review` pass, (3) syntax check + execution. This covers experiment scripts (Phase 5), analysis/statistical-test/figure generation scripts (Phase 6), and any figure re-run scripts (Phase 7). Step 1 is **not optional** for figure or analysis scripts that compute values at runtime — the Round 5 silent-failure incident was exactly that scenario (train features matched against val images). Full protocol in `prompts/05_experiment_execution.md`.
 
 ## Error Recovery
 

@@ -16,9 +16,9 @@
 
 Rev2Agent takes a vague research idea and iterates through literature search, experiment design, execution, analysis, and manuscript writing until you have a paper draft.
 
-It runs on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as a set of markdown prompts. No framework, no build step -- clone the repo, run `claude`, start talking about your research.
+It runs as a set of markdown instructions for coding agents. Today the repository supports both [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Codex via separate root entrypoints: `CLAUDE.md` for Claude Code and `AGENTS.md` for Codex. No framework, no build step -- clone the repo, open it in your agent, and follow the appropriate startup protocol.
 
-When you're stuck, type **`major revision`**. Rev2Agent convenes a discussion panel -- three Claude agents plus whichever external models you configured in Phase 0 (GPT, Gemini, Grok, etc.) -- to argue over your research decisions. The same kind of adversarial review you'd get from a venue, minus the six-month wait.
+When you're stuck, type **`major revision`**. Rev2Agent convenes a discussion panel -- host-native review agents plus whichever external models you configured in Phase 0 (GPT, Gemini, Grok, etc.) -- to argue over your research decisions. The same kind of adversarial review you'd get from a venue, minus the six-month wait.
 
 > *"Reviewer 2 acknowledges the author's ambition but questions whether the methodology section was written before or after the experiments were run."*
 
@@ -28,7 +28,7 @@ When you're stuck, type **`major revision`**. Rev2Agent convenes a discussion pa
 
 - Iterates from a vague idea to a manuscript draft through multiple experiment rounds
 - Tracks all research directions in a persistent roadmap -- nothing gets lost between rounds
-- `major revision` command convenes GPT, Gemini, and Claude to debate research decisions
+- `major revision` convenes host-native reviewers plus external models to debate research decisions
 - External model cross-checks experiment code logic before you spend GPU hours on it
 - Every manuscript claim is tagged as fact, synthesis, or common knowledge -- no vague "studies show..."
 - Every BibTeX entry is verified against Crossref/DBLP/Semantic Scholar (LLMs fabricate ~30% of citations)
@@ -58,7 +58,9 @@ Each project lives in its own directory with a `.research_state.json` file that 
 
 ## Prerequisites
 
-- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** -- the only hard requirement
+- **A supported coding agent host**
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- Codex
 
 ### Optional enhancements
 
@@ -66,15 +68,17 @@ These are not required. Rev2Agent works without them, but each one improves a sp
 
 **External LLM API keys** -- for multi-model discussions and independent code verification
 
-Paste your keys during Phase 0 setup. Rev2Agent auto-detects the provider from the key prefix. Supported providers include OpenRouter, Google AI Studio, OpenAI, xAI, and any OpenAI-compatible endpoint.
+Paste your keys during Phase 0 setup. Rev2Agent auto-detects the provider from the key prefix. Supported providers include OpenRouter, Google AI Studio, OpenAI, xAI, Anthropic, and any OpenAI-compatible endpoint.
 
-**Claude Code skills** -- Rev2Agent uses these if installed, falls back gracefully if not
+**Wrapper skills** -- shared prompts refer to host-neutral wrapper skill names, which each host maps to its own capabilities. Rev2Agent falls back gracefully if a host or skill is unavailable.
 
-| Skill | Used in | What it does | Install |
-|-------|---------|-------------|---------|
-| `/deep-research` | Phase 1-3 | Deep multi-source literature analysis | Built into Claude Code (Pro/Team/Enterprise) |
-| `/simplify` | Phase 5-6 | Code quality review | Built into Claude Code |
-| `/humanizer` | Phase 7 | Remove AI writing patterns from manuscript | `claude install-skill https://github.com/anthropics/claude-code-skills/tree/main/humanizer` |
+| Wrapper skill | Used in | Purpose | Claude Code mapping |
+|--------------|---------|---------|---------------------|
+| `research-deep-dive` | Phase 1-3 | Deep multi-source literature analysis | `/deep-research` |
+| `code-quality-review` | Phase 5-6 | Code quality review after logical verification | `/simplify` |
+| `writing-humanizer` | Phase 7 | Remove AI writing patterns from manuscript | `/humanizer` |
+
+Under Codex, these wrapper names map through `AGENTS.md` to Codex-native workflows or manual fallback behavior.
 
 **tectonic** -- for LaTeX manuscript compilation in Phase 7
 
@@ -86,9 +90,11 @@ curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
 
 See **[INSTALL.md](INSTALL.md)** for detailed setup instructions (English + 한국어).
 
-Open Claude Code and paste:
+For Claude Code, paste:
 
 > Clone https://github.com/dalbom/rev2agent and set it up as my working directory. Then follow the CLAUDE.md startup protocol.
+
+For Codex, open the repository and follow the `AGENTS.md` startup protocol.
 
 That's it. Rev2Agent handles the rest.
 
@@ -96,7 +102,7 @@ That's it. Rev2Agent handles the rest.
 
 | Command | What it does |
 |---------|-------------|
-| <nobr>`major revision`</nobr> | Multi-model discussion panel (external models + Claude, requires API keys from Phase 0) |
+| <nobr>`major revision`</nobr> | Multi-model discussion panel (external models + host-native reviewers, requires API keys from Phase 0 for external models) |
 | `reconfigure` | Re-run Phase 0 setup |
 
 ## The Reviewer 2 Persona
@@ -120,6 +126,7 @@ At phase transitions and result assessments, the agent speaks as Reviewer 2. It 
 
 ```
 rev2agent/
+├── AGENTS.md                    # Codex entrypoint
 ├── CLAUDE.md                    # Main agent instructions
 ├── prompts/
 │   ├── 00_setup.md              # Phase 0: Environment setup

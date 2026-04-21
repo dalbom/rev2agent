@@ -305,7 +305,7 @@ If any gate fails:
 After all sections are written and references are verified, review each section to remove signs of AI-generated writing. Academic reviewers and readers are increasingly sensitive to AI writing patterns (inflated language, promotional tone, excessive conjunctive phrases, em dash overuse, etc.).
 
 **Procedure:**
-1. For each section file in `sections/`, if the `/humanizer` skill is available, run it on the content. Otherwise, manually review for AI writing patterns: inflated language ("groundbreaking", "notable", "crucial"), promotional tone, excessive conjunctive phrases ("Moreover", "Furthermore", "Additionally"), em dash overuse, and formulaic paragraph structures.
+1. For each section file in `sections/`, if the `writing-humanizer` skill is available, run it on the content. Otherwise, manually review for AI writing patterns: inflated language ("groundbreaking", "notable", "crucial"), promotional tone, excessive conjunctive phrases ("Moreover", "Furthermore", "Additionally"), em dash overuse, and formulaic paragraph structures.
 2. Review the changes — ensure technical accuracy is preserved (automated or manual edits may occasionally simplify domain-specific phrasing that should stay).
 3. Pay special attention to the Introduction and Discussion sections, which are most prone to AI writing patterns.
 

@@ -16,16 +16,18 @@
 
 연구 아이디어 하나를 던지면 문헌 조사, 실험 설계, 실행, 분석, 논문 작성을 반복하면서 논문 초고까지 만들어주는 연구 에이전트입니다.
 
+이 저장소는 코딩 에이전트를 위한 마크다운 지시문 세트로 동작합니다. 현재는 `CLAUDE.md`를 사용하는 Claude Code와 `AGENTS.md`를 사용하는 Codex를 모두 지원합니다. 프레임워크나 빌드 과정은 없습니다. 저장소를 열고, 현재 호스트에 맞는 시작 프로토콜만 따르면 됩니다.
+
 학회에서 제일 까다롭다는 **Reviewer 2** 역할을 합니다. 실험 설계에 빈 곳이 있으면 짚고, ablation이 없으면 지적하고, 근거 없는 주장은 통과시키지 않습니다. 진짜 리뷰어한테 지적당하기 전에 먼저 잡아주는 겁니다.
 
-막혔을 때 **`major revision`** 한 줄 치면 Claude 3명과 Phase 0에서 설정한 외부 모델(GPT, Gemini, Grok 등)이 패널로 붙어서 연구 방향을 놓고 토론합니다. 학회 리뷰 6개월 기다릴 거 없이.
+막혔을 때 **`major revision`** 한 줄 치면 호스트의 기본 리뷰 에이전트들과 Phase 0에서 설정한 외부 모델(GPT, Gemini, Grok 등)이 패널로 붙어서 연구 방향을 놓고 토론합니다. 학회 리뷰 6개월 기다릴 거 없이.
 
 ## 주요 기능
 
 - 아이디어에서 논문 초고까지, 실험을 여러 라운드 반복하면서 도달
-- 마크다운 프롬프트만으로 동작. 프레임워크 없음. Claude Code에서 바로 실행
+- 마크다운 지시문만으로 동작. 프레임워크 없음. Claude Code와 Codex 모두 지원
 - 모든 연구 방향을 로드맵에 기록. 라운드가 넘어가도 아이디어가 사라지지 않음
-- `major revision` 명령으로 외부 모델 + Claude가 함께 연구 방향 토론 (Phase 0에서 API 키 설정 필요)
+- `major revision` 명령으로 외부 모델 + 호스트 기본 리뷰 에이전트가 함께 연구 방향 토론 (Phase 0에서 API 키 설정 필요)
 - 실험 코드를 실행하기 전에 외부 모델이 로직을 검증 (데이터 누수, split 오류 등)
 - 논문의 모든 수치는 결과 파일에서 직접 인용. "연구에 따르면..." 같은 출처 없는 표현 금지
 - BibTeX 엔트리를 Crossref/DBLP/Semantic Scholar에서 대조 (LLM은 인용의 ~30%를 지어냄)
@@ -55,7 +57,9 @@ Phase 4-6은 결과가 충분할 때까지 반복됩니다. 각 라운드의 결
 
 ## 필요 사항
 
-- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** -- 유일한 필수 요건
+- **지원되는 코딩 에이전트 호스트**
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- Codex
 
 ### 선택 사항
 
@@ -63,15 +67,17 @@ Phase 4-6은 결과가 충분할 때까지 반복됩니다. 각 라운드의 결
 
 **외부 LLM API 키** -- 멀티 모델 토론과 코드 교차 검증에 사용
 
-Phase 0 설정 시 키를 붙여넣으면 프로바이더를 자동 인식합니다. OpenRouter, Google AI Studio, OpenAI, xAI 등 OpenAI-compatible 엔드포인트를 지원합니다.
+Phase 0 설정 시 키를 붙여넣으면 프로바이더를 자동 인식합니다. OpenRouter, Google AI Studio, OpenAI, xAI, Anthropic, 그리고 OpenAI-compatible 엔드포인트를 지원합니다.
 
-**Claude Code skill** -- 설치돼 있으면 사용, 없으면 수동 대체
+**래퍼 skill 이름** -- 공유 프롬프트는 호스트 중립적인 skill 이름을 사용하고, 각 호스트가 이를 자기 기능으로 매핑합니다. 없으면 수동으로 대체합니다.
 
-| Skill | 사용 단계 | 기능 | 설치 |
-|-------|-----------|------|------|
-| `/deep-research` | Phase 1-3 | 멀티 소스 문헌 심층 분석 | Claude Code 내장 (Pro/Team/Enterprise) |
-| `/simplify` | Phase 5-6 | 코드 품질 리뷰 | Claude Code 내장 |
-| `/humanizer` | Phase 7 | 논문에서 AI 작성 패턴 제거 | `claude install-skill https://github.com/anthropics/claude-code-skills/tree/main/humanizer` |
+| 래퍼 skill | 사용 단계 | 기능 | Claude Code 매핑 |
+|------------|-----------|------|-------------------|
+| `research-deep-dive` | Phase 1-3 | 멀티 소스 문헌 심층 분석 | `/deep-research` |
+| `code-quality-review` | Phase 5-6 | 논리 검증 후 코드 품질 리뷰 | `/simplify` |
+| `writing-humanizer` | Phase 7 | 논문에서 AI 작성 패턴 제거 | `/humanizer` |
+
+Codex에서는 이 래퍼 이름들이 `AGENTS.md`를 통해 Codex 쪽 워크플로 또는 수동 대체 절차로 매핑됩니다.
 
 **tectonic** -- Phase 7에서 LaTeX 논문 PDF 컴파일에 사용
 
@@ -83,9 +89,11 @@ curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
 
 자세한 설치 방법은 **[INSTALL.md](INSTALL.md)**를 참고하세요.
 
-Claude Code를 열고 아래 프롬프트를 붙여넣으세요:
+Claude Code에서는 아래 프롬프트를 붙여넣으세요:
 
 > Clone https://github.com/dalbom/rev2agent and set it up as my working directory. Then follow the CLAUDE.md startup protocol.
+
+Codex에서는 저장소를 열고 `AGENTS.md` 시작 프로토콜을 따르면 됩니다.
 
 나머지는 Rev2Agent가 안내합니다.
 
@@ -93,7 +101,7 @@ Claude Code를 열고 아래 프롬프트를 붙여넣으세요:
 
 | 명령어 | 설명 |
 |--------|------|
-| <nobr>`major revision`</nobr> | 멀티 모델 토론 패널 소집 (외부 모델 + Claude, Phase 0에서 API 키 설정 필요) |
+| <nobr>`major revision`</nobr> | 멀티 모델 토론 패널 소집 (외부 모델 + 호스트 기본 리뷰 에이전트, 외부 모델은 Phase 0 API 키 필요) |
 | `reconfigure` | 환경 설정 다시 실행 |
 
 ## Reviewer 2 페르소나
@@ -120,7 +128,8 @@ Phase 전환이나 결과 평가 시점에 Reviewer 2로서 말합니다.
 
 ```
 rev2agent/
-├── CLAUDE.md              # 에이전트 지시문 (라우팅 + 상태 관리)
+├── AGENTS.md              # Codex용 엔트리포인트
+├── CLAUDE.md              # Claude Code용 엔트리포인트
 ├── prompts/               # 페이즈별 프롬프트 (공유)
 │   ├── 00_setup.md
 │   ├── 01_interview.md

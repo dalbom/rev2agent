@@ -1,9 +1,9 @@
 # New Session at Phase Boundaries
 
-Because all phase outputs are persisted to files (`.research_state.json`, `summaries/`, `research_roadmap.md`, experiment results), the conversation history is fully reconstructable from disk. Starting a new session at phase boundaries is preferred over `/compact` because:
+Because all phase outputs are persisted to files (`.research_state.json`, `summaries/`, `research_roadmap.md`, experiment results), the conversation history is fully reconstructable from disk. Starting a new session at phase boundaries is preferred over carrying forward a large summarized context because:
 
-1. **No information loss** — new session reads state files directly, while `/compact` summarizes (lossy).
-2. **No token cost** — `/compact` consumes tokens to generate a summary. A new session only reads the files it needs.
+1. **No information loss** — a new session reads state files directly instead of relying on condensed conversation history.
+2. **Lower context load** — a new session only reads the files it needs.
 3. **Clean context** — no accumulated noise from previous phases.
 
 ## When to Recommend
@@ -34,7 +34,7 @@ At a qualifying transition, fold the recommendation into the existing confirmati
 
 > Phase N complete. Summary, state, and roadmap are written.
 > This phase accumulated large tool results — **recommend starting a new session** before Phase N+1.
-> Run `claude` again and say "continue [project_name]", or say "continue" here to proceed in this session.
+> Start a fresh session in this repository and say "continue [project_name]", or say "continue" here to proceed in this session.
 
 The new session will follow the Startup Protocol, detect the project, read `.research_state.json`, and resume at the correct phase.
 

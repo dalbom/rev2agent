@@ -15,7 +15,7 @@ Direct conversation with the user. This phase requires careful deliberation and 
 
 ### 3.1 Research Question Formulation
 
-If the `/deep-research` skill is available, use it to conduct a targeted deep dive on the selected direction. Otherwise, use WebSearch to research: the specific method/approach chosen in Phase 2, its known limitations, recent advances, and unexplored variations. Use the findings to ensure the research question targets a genuine gap and avoids duplicating existing work.
+If the `research-deep-dive` skill is available, use it to conduct a targeted deep dive on the selected direction. Otherwise, use WebSearch to research: the specific method/approach chosen in Phase 2, its known limitations, recent advances, and unexplored variations. Use the findings to ensure the research question targets a genuine gap and avoids duplicating existing work.
 
 Refine the broad direction into a precise research question. A good research question is:
 - **Specific**: Not "Does synthetic data help?" but "Does training on GTA-V synthetic data with domain randomization improve Cityscapes semantic segmentation mIoU compared to training on Cityscapes alone?"

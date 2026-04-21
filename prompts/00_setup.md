@@ -55,10 +55,12 @@ If you don't have any, just type "skip".
 | `sk-` (not `sk-or-`) | OpenAI | `https://api.openai.com/v1/chat/completions` |
 | `AIzaSy` | Google AI Studio | `https://generativelanguage.googleapis.com/v1beta` |
 | `xai-` | xAI (Grok) | `https://api.x.ai/v1/chat/completions` |
-| `sk-ant-` | Anthropic — skip, redundant with Claude | — |
+| `sk-ant-` | Anthropic | Host-dependent |
 | Unknown | Ask the user which provider | — |
 
 The flagship model for each provider is selected automatically in Step 0.3 (not hardcoded here).
+
+**Host-provider note:** If the pasted key belongs to the same provider as the current host agent, ask whether the user wants to keep it for explicit external API calls or skip it as redundant. Do not assume a provider is always redundant across hosts.
 
 **Handling natural language input:** The user might type any of these:
 - `sk-or-v1-abc123` (just the key)
@@ -75,7 +77,7 @@ Parse whatever format they use. Extract keys, auto-detect providers, confirm wit
 3. If test fails: `❌ [Provider] key didn't work. Check the key and try again, or skip.`
 4. Store the key in `.rev2agent_config.json` (the config file is gitignored).
 
-**If the user says "skip":** Note that all discussions will use Claude agents only. This is perfectly fine — move on.
+**If the user says "skip":** Note that all discussions will use host-native review agents only. This is perfectly fine — move on.
 
 ### 0.3 Model Selection (automatic — do NOT ask the user)
 
@@ -129,9 +131,9 @@ Step 5: Sanity check
 
 #### Role assignment
 
-- **Verification** (experiment code review): Pick one external (non-Anthropic) flagship model. External models provide genuinely independent review — Claude reviewing Claude's code has less value. If multiple external flagships exist, pick any one.
-- **Discussion** ("major revision" panel): Include ALL selected flagship models across providers for maximum diversity, plus Claude agents. One model per provider, no duplicates.
-- **Claude agents** are always included in discussion (default 3). They are not selected through this pipeline — they come from the host agent (Claude Code itself).
+- **Verification** (experiment code review): Pick one external flagship model from a provider other than the current host provider when possible. Independent review from a different provider is more valuable than same-provider review. If multiple such flagships exist, pick any one.
+- **Discussion** ("major revision" panel): Include ALL selected flagship models across providers for maximum diversity, plus host-native review agents. One model per provider, no duplicates.
+- **Host-native review agents** are always included in discussion (default 3). They are not selected through this pipeline — they come from the current host agent environment.
 
 #### Examples
 
@@ -139,19 +141,19 @@ Assuming the filter pipeline selects: `openai/gpt-5.4`, `google/gemini-3.1-pro-p
 
 ```
 verification: openai/gpt-5.4 (external)
-discussion:   3x Claude + openai/gpt-5.4 + google/gemini-3.1-pro-preview + x-ai/grok-4
+discussion:   3x host-native review agents + openai/gpt-5.4 + google/gemini-3.1-pro-preview + x-ai/grok-4
 ```
 
 One external model only:
 ```
 verification: openai/gpt-5.4
-discussion:   3x Claude + openai/gpt-5.4
+discussion:   3x host-native review agents + openai/gpt-5.4
 ```
 
 No external models:
 ```
-verification: Claude agent (with adversarial prompt)
-discussion:   3x Claude agents only
+verification: host-native reviewer (with adversarial prompt)
+discussion:   3x host-native review agents only
 ```
 
 #### Show result, don't ask
@@ -180,7 +182,7 @@ External models:
 
 Roles:
   Verification: gpt-5.4 (external)
-  Discussion:   3 Claude + gpt-5.4 + gemini-3.1-pro-preview
+  Discussion:   3 host-native review agents + gpt-5.4 + gemini-3.1-pro-preview
 
 LaTeX: ✅ tectonic found  /  ⚠️ Not installed yet (needed for Phase 7)
        Install later: curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
@@ -193,10 +195,10 @@ If no external models:
 Rev2Agent — Ready
 ═══════════════════
 
-External models: None configured (Claude-only mode)
+External models: None configured (host-only mode)
   Tip: You can add API keys anytime by typing "reconfigure"
 
-"Major Revision" panel: 3 Claude agents
+"Major Revision" panel: 3 host-native review agents
 
 LaTeX: ✅ tectonic found  /  ⚠️ Not installed yet
 
@@ -265,7 +267,7 @@ Save to `.rev2agent_config.json` at the repository root. **This file must be add
 }
 ```
 
-The `providers` array can be empty (Claude-only mode). Keys are stored directly in this file since it is gitignored — no need for environment variables.
+The `providers` array can be empty (host-only mode). Keys are stored directly in this file since it is gitignored — no need for environment variables.
 
 ## State Update
 
