@@ -59,6 +59,43 @@ export interface RunEvent {
   timestamp?: string;
 }
 
+export interface ProjectToolResult {
+  status: "passed" | "failed";
+  return_code: number;
+  stdout?: string;
+  stderr?: string;
+  output_md?: string;
+  output_json?: string;
+  report?: string;
+  artifacts?: ArtifactRecord[];
+}
+
+export interface SettingsStatus {
+  codex_sdk: {
+    available: boolean;
+    version: string | null;
+    message: string;
+  };
+  repository: {
+    root: string;
+    config_exists: boolean;
+  };
+  tools: {
+    latex: ToolStatus;
+    python: {
+      available: boolean;
+      version: string;
+    };
+    package_manager: ToolStatus;
+  };
+}
+
+export interface ToolStatus {
+  name: string;
+  available: boolean;
+  path: string | null;
+}
+
 export async function listProjects(): Promise<ProjectDiscoveryResult> {
   const response = await fetch("/api/projects");
   if (!response.ok) {
@@ -139,6 +176,30 @@ export async function readArtifact(project: ProjectSummary, artifactId: number):
   const response = await fetch(`/api/projects/${project.project_dir}/artifacts/${artifactId}`);
   if (!response.ok) {
     throw new Error(`Failed to read artifact: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function collectResults(project: ProjectSummary): Promise<ProjectToolResult> {
+  const response = await fetch(`/api/projects/${project.project_dir}/collect-results`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Failed to collect results: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function validateManuscript(project: ProjectSummary): Promise<ProjectToolResult> {
+  const response = await fetch(`/api/projects/${project.project_dir}/validate-manuscript`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Failed to validate manuscript: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function getSettings(): Promise<SettingsStatus> {
+  const response = await fetch("/api/settings");
+  if (!response.ok) {
+    throw new Error(`Failed to load settings: ${response.status}`);
   }
   return response.json();
 }

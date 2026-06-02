@@ -46,6 +46,15 @@ The adapter uses `openai-codex` and the SDK-provided runtime. Existing Codex aut
 
 The GUI classifies requested actions before a Codex turn starts. Low-risk inspection uses `read_only`, normal project writing uses `workspace_write`, and high-risk operations pause for explicit browser approval before continuing. Approval decisions are persisted with job, project, action, risk, sandbox, user action, timestamp, and final status metadata.
 
+## Project Tools
+
+The backend exposes project-scoped tool actions for workflows that previously required terminal commands:
+
+- `POST /api/projects/{project_dir}/collect-results` runs `scripts/collect_results.py` against `experiment/results/` and writes comparison Markdown/JSON artifacts.
+- `POST /api/projects/{project_dir}/validate-manuscript` runs `scripts/validate_manuscript.py` against `manuscript/` and writes `validation_report.txt`.
+
+Both actions use fixed script arguments, reject project path traversal, and refresh the artifact index after completion.
+
 ## Verification
 
 ```powershell
@@ -60,5 +69,5 @@ pnpm build
 ## Current Limitations
 
 - Phase-specific panels share a generic job dashboard in this first browser version.
-- Settings currently reports environment and safety state; full in-browser Codex login and external model setup flows still need expansion.
+- Settings reports environment and safety state; full in-browser Codex login and external model setup flows still need expansion.
 - Real Codex phase execution requires valid local Codex authentication and the beta `openai-codex` package/runtime.

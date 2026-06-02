@@ -44,6 +44,34 @@ const projectsResponse = {
   ]
 };
 
+const settingsResponse = {
+  codex_sdk: {
+    available: true,
+    version: "0.1.0b2",
+    message: "openai_codex is installed."
+  },
+  repository: {
+    root: "C:/dev/rev2agent/rev2agent-repo",
+    config_exists: true
+  },
+  tools: {
+    latex: {
+      name: "tectonic",
+      available: true,
+      path: "C:/tools/tectonic.exe"
+    },
+    python: {
+      available: true,
+      version: "3.11.14"
+    },
+    package_manager: {
+      name: "pnpm",
+      available: true,
+      path: "C:/tools/pnpm.cmd"
+    }
+  }
+};
+
 describe("App", () => {
   beforeEach(() => {
     FakeEventSource.instances = [];
@@ -65,6 +93,12 @@ describe("App", () => {
               active_runs: 0,
               healthy: true
             })
+          };
+        }
+        if (String(input) === "/api/settings") {
+          return {
+            ok: true,
+            json: async () => settingsResponse
           };
         }
         if (String(input).includes("/phase/4/jobs")) {
@@ -112,6 +146,29 @@ describe("App", () => {
           return {
             ok: true,
             json: async () => ({ job_id: "job-1", interrupted: true })
+          };
+        }
+        if (String(input) === "/api/projects/synthetic_segmentation/collect-results") {
+          return {
+            ok: true,
+            json: async () => ({
+              status: "passed",
+              return_code: 0,
+              output_md: "synthetic_segmentation/experiment/results/comparison.md",
+              output_json: "synthetic_segmentation/experiment/results/comparison.json",
+              artifacts: []
+            })
+          };
+        }
+        if (String(input) === "/api/projects/synthetic_segmentation/validate-manuscript") {
+          return {
+            ok: true,
+            json: async () => ({
+              status: "passed",
+              return_code: 0,
+              report: "synthetic_segmentation/manuscript/validation_report.txt",
+              artifacts: []
+            })
           };
         }
         if (String(input).endsWith("/artifacts/1")) {
@@ -172,9 +229,12 @@ describe("App", () => {
   it("routes setup-required repositories to settings and safety", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
+      vi.fn(async (input: RequestInfo | URL) => ({
         ok: true,
-        json: async () => ({ ...projectsResponse, setup_required: true, config_exists: false })
+        json: async () =>
+          String(input) === "/api/settings"
+            ? { ...settingsResponse, repository: { ...settingsResponse.repository, config_exists: false } }
+            : { ...projectsResponse, setup_required: true, config_exists: false }
       }))
     );
 
@@ -182,6 +242,17 @@ describe("App", () => {
 
     expect(await screen.findByText("Settings And Safety")).toBeInTheDocument();
     expect(screen.getByText(".rev2agent_config.json is missing")).toBeInTheDocument();
+  });
+
+  it("shows backend settings and tool status", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+
+    expect(await screen.findByText("openai_codex is installed.")).toBeInTheDocument();
+    expect(screen.getByText("tectonic found at C:/tools/tectonic.exe")).toBeInTheDocument();
+    expect(screen.getByText("Python 3.11.14")).toBeInTheDocument();
+    expect(screen.getByText("pnpm found at C:/tools/pnpm.cmd")).toBeInTheDocument();
   });
 
   it("opens phase dashboard from a project card", async () => {
@@ -290,5 +361,27 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /open phase1_topic.md/i }));
 
     expect(await screen.findByText("# Topic Summary")).toBeInTheDocument();
+  });
+
+  it("runs result collection and manuscript validation from the artifact screen", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /view files/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /collect results/i }));
+
+    expect(await screen.findByText("Result collection passed")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/projects/synthetic_segmentation/collect-results",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /validate manuscript/i }));
+
+    expect(await screen.findByText("Manuscript validation passed")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/projects/synthetic_segmentation/validate-manuscript",
+      expect.objectContaining({ method: "POST" })
+    );
   });
 });

@@ -11,8 +11,10 @@ from .artifacts import ArtifactService
 from .codex_adapter import CodexSdkAdapter, get_sdk_status
 from .database import RuntimeStore
 from .phases import PhaseJobService, format_sse_event
+from .project_tools import ProjectToolService
 from .projects import create_project_draft, discover_projects
 from .projects import load_project_state
+from .settings import build_settings_status
 
 
 def repository_root() -> Path:
@@ -36,6 +38,10 @@ def phase_service() -> PhaseJobService:
 
 def artifact_service() -> ArtifactService:
     return ArtifactService(repo_root=repository_root(), store=runtime_store())
+
+
+def project_tool_service() -> ProjectToolService:
+    return ProjectToolService(repo_root=repository_root(), artifact_service=artifact_service())
 
 
 class StartPhaseJobRequest(BaseModel):
@@ -128,13 +134,16 @@ def read_artifact(project_dir: str, artifact_id: int):
     return artifact_service().read_artifact(project_dir, artifact_id)
 
 
+@app.post("/api/projects/{project_dir}/collect-results")
+def collect_results(project_dir: str):
+    return project_tool_service().collect_results(project_dir)
+
+
+@app.post("/api/projects/{project_dir}/validate-manuscript")
+def validate_manuscript(project_dir: str):
+    return project_tool_service().validate_manuscript(project_dir)
+
+
 @app.get("/api/settings")
 def settings_status():
-    status = get_sdk_status()
-    return {
-        "codex_sdk": status,
-        "repository": {
-            "root": repository_root(),
-            "config_exists": (repository_root() / ".rev2agent_config.json").exists(),
-        },
-    }
+    return build_settings_status(repository_root(), sdk_status=get_sdk_status())

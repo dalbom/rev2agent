@@ -2,20 +2,25 @@ import { AlertTriangle, Files, FolderOpen, Play, Plus, Settings, Square, Termina
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  collectResults,
   continueJob,
   createProjectDraft,
+  getSettings,
   interruptJob,
   listArtifacts,
   listProjects,
   readArtifact,
   startPhaseJob,
   submitJobApproval,
+  validateManuscript,
   type ArtifactContent,
   type ArtifactRecord,
   type PhaseJobResult,
   type ProjectDiscoveryResult,
   type ProjectSummary,
-  type RunEvent
+  type RunEvent,
+  type SettingsStatus,
+  type ToolStatus
 } from "./api";
 import "./styles.css";
 
@@ -395,6 +400,7 @@ function LiveRunConsole({ jobId }: { jobId: string | null }) {
 function ArtifactBrowser({ project }: { project: ProjectSummary }) {
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [preview, setPreview] = useState<ArtifactContent | null>(null);
+  const [toolMessage, setToolMessage] = useState<string | null>(null);
   const [loadingArtifacts, setLoadingArtifacts] = useState(true);
 
   useEffect(() => {
@@ -416,12 +422,35 @@ function ArtifactBrowser({ project }: { project: ProjectSummary }) {
     setPreview(await readArtifact(project, artifact.artifact_id));
   }
 
+  async function runCollectResults() {
+    const result = await collectResults(project);
+    if (result.artifacts) setArtifacts(result.artifacts);
+    setToolMessage(`Result collection ${result.status}`);
+  }
+
+  async function runValidateManuscript() {
+    const result = await validateManuscript(project);
+    if (result.artifacts) setArtifacts(result.artifacts);
+    setToolMessage(`Manuscript validation ${result.status}`);
+  }
+
   return (
     <section className="panel">
-      <div className="panel-heading">
-        <Files aria-hidden="true" size={18} />
-        <h2>Artifact Browser</h2>
+      <div className="section-toolbar">
+        <div className="panel-heading">
+          <Files aria-hidden="true" size={18} />
+          <h2>Artifact Browser</h2>
+        </div>
+        <div className="action-row">
+          <button className="secondary-button" onClick={runCollectResults}>
+            Collect Results
+          </button>
+          <button className="secondary-button" onClick={runValidateManuscript}>
+            Validate Manuscript
+          </button>
+        </div>
       </div>
+      {toolMessage ? <p className="job-message">{toolMessage}</p> : null}
       <div className="tab-row" role="tablist" aria-label="Artifact categories">
         {["Summaries", "Literature", "Experiments", "Results", "Manuscript", "Figures"].map((tab) => (
           <button className="tab-button" key={tab} role="tab" aria-selected={tab === "Summaries"}>
@@ -457,6 +486,20 @@ function ArtifactBrowser({ project }: { project: ProjectSummary }) {
 }
 
 function SettingsSafety({ configExists }: { configExists: boolean }) {
+  const [settings, setSettings] = useState<SettingsStatus | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getSettings().then((status) => {
+      if (alive) setSettings(status);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const effectiveConfigExists = settings?.repository.config_exists ?? configExists;
+
   return (
     <section className="settings-layout">
       <div className="panel">
@@ -467,15 +510,23 @@ function SettingsSafety({ configExists }: { configExists: boolean }) {
         <dl className="settings-list">
           <div>
             <dt>Rev2Agent config</dt>
-            <dd>{configExists ? ".rev2agent_config.json found" : ".rev2agent_config.json is missing"}</dd>
+            <dd>{effectiveConfigExists ? ".rev2agent_config.json found" : ".rev2agent_config.json is missing"}</dd>
           </div>
           <div>
             <dt>Codex authentication</dt>
-            <dd>Checked by backend before SDK jobs start</dd>
+            <dd>{settings?.codex_sdk.message ?? "Checked by backend before SDK jobs start"}</dd>
+          </div>
+          <div>
+            <dt>LaTeX compiler</dt>
+            <dd>{settings ? toolStatusText(settings.tools.latex) : "Checking tectonic..."}</dd>
+          </div>
+          <div>
+            <dt>Python environment</dt>
+            <dd>{settings ? `Python ${settings.tools.python.version}` : "Checking Python..."}</dd>
           </div>
           <div>
             <dt>Package manager</dt>
-            <dd>Use pnpm for frontend dependencies</dd>
+            <dd>{settings ? toolStatusText(settings.tools.package_manager) : "Checking pnpm..."}</dd>
           </div>
           <div>
             <dt>Sandbox policy</dt>
@@ -485,6 +536,10 @@ function SettingsSafety({ configExists }: { configExists: boolean }) {
       </div>
     </section>
   );
+}
+
+function toolStatusText(tool: ToolStatus) {
+  return tool.available && tool.path ? `${tool.name} found at ${tool.path}` : `${tool.name} not found`;
 }
 
 function StatusChip({ label, tone }: { label: string; tone: "ok" | "warn" }) {
