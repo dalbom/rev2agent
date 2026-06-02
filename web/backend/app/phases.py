@@ -163,6 +163,77 @@ class PhaseJobService:
             )
         return interrupted
 
+    def submit_approval(self, job_id: str, *, user_action: str) -> dict[str, Any]:
+        if user_action not in {"approved", "rejected"}:
+            raise ValueError("Approval action must be approved or rejected")
+        final_status = "approved" if user_action == "approved" else "rejected"
+        approval = self.store.update_latest_approval(
+            job_id,
+            user_action=user_action,
+            final_status=final_status,
+        )
+        self.store.update_job(
+            job_id,
+            approval_state=user_action,
+            status="waiting_to_continue" if user_action == "approved" else "rejected",
+        )
+        self.store.add_event(
+            job_id=job_id,
+            event_type=f"approval_{user_action}",
+            summary=f"User {user_action} this job.",
+            raw_payload={"approval_id": approval["approval_id"]},
+        )
+        return approval
+
+    async def continue_job(self, job_id: str, *, action: str, prompt: str) -> PhaseJobResult:
+        job = self.store.get_job(job_id)
+        if job["approval_state"] != "approved":
+            raise ValueError("Job cannot continue until approval is recorded")
+
+        project_dir = job["project_dir"]
+        project_path = self._project_path(project_dir)
+        decision = classify_action(phase=job["phase"], action=action)
+        thread = await self.adapter.start_thread(
+            project_dir=str(project_path),
+            phase=job["phase"],
+            sandbox=decision.sandbox.value,
+        )
+        self.store.update_job(
+            job_id,
+            thread_id=thread.thread_id,
+            status="running",
+            sandbox=decision.sandbox.value,
+        )
+
+        turn_id: str | None = None
+        async for event in self.adapter.stream_turn(
+            thread.thread_id,
+            prompt,
+            sandbox=decision.sandbox.value,
+        ):
+            turn_id = event.turn_id
+            self.store.add_event(
+                job_id=job_id,
+                event_type=event.event_type,
+                summary=event.summary,
+                raw_payload=event.raw_payload,
+            )
+
+        self.store.update_job(
+            job_id,
+            turn_id=turn_id,
+            status="completed",
+            completed_at=utc_now(),
+        )
+        return PhaseJobResult(
+            job_id=job_id,
+            requires_approval=False,
+            status="completed",
+            sandbox=decision.sandbox.value,
+            thread_id=thread.thread_id,
+            turn_id=turn_id,
+        )
+
     def list_events(self, job_id: str) -> list[dict[str, Any]]:
         return self.store.list_events(job_id)
 

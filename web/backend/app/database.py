@@ -154,6 +154,28 @@ class RuntimeStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def update_latest_approval(
+        self,
+        job_id: str,
+        *,
+        user_action: str,
+        final_status: str,
+    ) -> dict[str, Any]:
+        approvals = self.list_approvals(job_id)
+        if not approvals:
+            raise KeyError(job_id)
+        approval_id = approvals[-1]["approval_id"]
+        with self._connect() as conn:
+            conn.execute(
+                """
+                update approvals
+                set user_action = ?, final_status = ?
+                where approval_id = ?
+                """,
+                (user_action, final_status, approval_id),
+            )
+        return self.list_approvals(job_id)[-1]
+
     def add_artifact(
         self,
         *,

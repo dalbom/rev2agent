@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,39 @@ def load_project_state(repo_root: Path, project_path: Path) -> dict[str, Any]:
     return data
 
 
+def create_project_draft(repo_root: Path) -> ProjectSummary:
+    root = repo_root.resolve()
+    project_path = root / "_new_project_draft"
+    project_path.mkdir(exist_ok=True)
+    state_path = project_path / ".research_state.json"
+
+    if not state_path.exists():
+        now = _utc_now()
+        state = {
+            "project_dir": "_new_project_draft",
+            "current_phase": 1,
+            "sub_step": None,
+            "current_round": 0,
+            "phase_status": "in_progress",
+            "project_status": "active",
+            "created_at": now,
+            "updated_at": now,
+            "topic": {
+                "broad_topic": "",
+                "specific_topic": "",
+                "research_question": "",
+                "positioning": "",
+                "target_venue": "",
+                "target_dataset": [],
+                "metrics": [],
+            },
+            "phase_history": [],
+        }
+        state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    return _summarize_project(root, project_path, state_path)
+
+
 def _summarize_project(root: Path, project_path: Path, state_path: Path) -> ProjectSummary:
     try:
         state = load_project_state(root, project_path)
@@ -131,3 +165,7 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")

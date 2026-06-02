@@ -11,7 +11,7 @@ from .artifacts import ArtifactService
 from .codex_adapter import CodexSdkAdapter, get_sdk_status
 from .database import RuntimeStore
 from .phases import PhaseJobService, format_sse_event
-from .projects import discover_projects
+from .projects import create_project_draft, discover_projects
 from .projects import load_project_state
 
 
@@ -44,9 +44,23 @@ class StartPhaseJobRequest(BaseModel):
     approved: bool = False
 
 
+class ContinueJobRequest(BaseModel):
+    action: str
+    prompt: str
+
+
+class ApprovalRequest(BaseModel):
+    user_action: str
+
+
 @app.get("/api/projects")
 def list_projects():
     return discover_projects(repository_root())
+
+
+@app.post("/api/projects")
+def create_project():
+    return create_project_draft(repository_root())
 
 
 @app.get("/api/projects/{project_dir}/state")
@@ -88,6 +102,20 @@ def stream_job_events(job_id: str):
 async def interrupt_job(job_id: str):
     interrupted = await phase_service().interrupt_job(job_id)
     return {"job_id": job_id, "interrupted": interrupted}
+
+
+@app.post("/api/jobs/{job_id}/approval")
+def submit_approval(job_id: str, request: ApprovalRequest):
+    return phase_service().submit_approval(job_id, user_action=request.user_action)
+
+
+@app.post("/api/jobs/{job_id}/continue")
+async def continue_job(job_id: str, request: ContinueJobRequest):
+    return await phase_service().continue_job(
+        job_id,
+        action=request.action,
+        prompt=request.prompt,
+    )
 
 
 @app.get("/api/projects/{project_dir}/artifacts")

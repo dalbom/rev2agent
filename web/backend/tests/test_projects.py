@@ -7,6 +7,7 @@ import pytest
 
 from app.projects import (
     PHASE_LABELS,
+    create_project_draft,
     discover_projects,
     get_repository_status,
     load_project_state,
@@ -91,3 +92,26 @@ def test_load_project_state_rejects_paths_outside_repo(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="outside repository"):
         load_project_state(tmp_path, outside)
+
+
+def test_create_project_draft_initializes_recoverable_phase_one_state(tmp_path: Path) -> None:
+    draft = create_project_draft(tmp_path)
+    state_path = tmp_path / "_new_project_draft" / ".research_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert draft.project_dir == "_new_project_draft"
+    assert draft.phase == 1
+    assert draft.phase_label == "Choose Topic"
+    assert draft.phase_status == "in_progress"
+    assert state["project_dir"] == "_new_project_draft"
+    assert state["current_phase"] == 1
+    assert state["phase_status"] == "in_progress"
+    assert "created_at" in state
+
+
+def test_create_project_draft_reuses_existing_draft(tmp_path: Path) -> None:
+    first = create_project_draft(tmp_path)
+    second = create_project_draft(tmp_path)
+
+    assert second.project_dir == first.project_dir
+    assert len(discover_projects(tmp_path).projects) == 1

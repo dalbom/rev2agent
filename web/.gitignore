@@ -1,0 +1,4 @@
+.logs/
+backend/.data/
+frontend/dist/
+frontend/node_modules/

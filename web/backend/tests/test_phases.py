@@ -104,6 +104,39 @@ async def test_high_risk_job_waits_for_gui_approval_before_starting_thread(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_approved_high_risk_job_can_continue_existing_job(tmp_path: Path) -> None:
+    write_project(tmp_path, phase=5)
+    store = RuntimeStore(tmp_path / "runtime.sqlite3")
+    adapter = SpyAdapter()
+    service = PhaseJobService(repo_root=tmp_path, store=store, adapter=adapter)
+    result = await service.start_phase_job(
+        project_dir="demo_project",
+        phase=5,
+        action="Run experiment scripts",
+        prompt="Run experiments",
+    )
+
+    approval = service.submit_approval(result.job_id, user_action="approved")
+    continued = await service.continue_job(
+        result.job_id,
+        action="Run experiment scripts",
+        prompt="Run approved experiments",
+    )
+
+    job = store.get_job(result.job_id)
+    events = store.list_events(result.job_id)
+    approvals = store.list_approvals(result.job_id)
+    assert approval["user_action"] == "approved"
+    assert continued.status == "completed"
+    assert job["thread_id"].startswith("fake-thread-")
+    assert job["turn_id"].startswith("fake-turn-")
+    assert job["approval_state"] == "approved"
+    assert adapter.started == 1
+    assert approvals[0]["final_status"] == "approved"
+    assert events[-1]["event_type"] == "turn_completed"
+
+
+@pytest.mark.asyncio
 async def test_interrupt_updates_status_and_records_event(tmp_path: Path) -> None:
     write_project(tmp_path)
     store = RuntimeStore(tmp_path / "runtime.sqlite3")

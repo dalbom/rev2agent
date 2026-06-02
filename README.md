@@ -96,6 +96,8 @@ For Claude Code, paste:
 
 For Codex, open the repository and follow the `AGENTS.md` startup protocol.
 
+For the local browser GUI, see **[web/README.md](web/README.md)**. The GUI runs the existing Rev2Agent project workflow through a FastAPI backend and React frontend while preserving `.research_state.json` as project state.
+
 That's it. Rev2Agent handles the rest.
 
 ## Special Commands
