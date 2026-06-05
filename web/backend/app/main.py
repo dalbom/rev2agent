@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -12,9 +12,11 @@ from .codex_adapter import CodexSdkAdapter, get_sdk_status
 from .database import RuntimeStore
 from .phases import PhaseJobService, format_sse_event
 from .project_tools import ProjectToolService
-from .projects import create_project_draft, discover_projects
+from .projects import archive_project, create_project_draft, discover_projects
 from .projects import load_project_state
 from .settings import build_settings_status
+from .setup import complete_host_only_setup as write_host_only_setup
+from .setup import setup_is_complete
 
 
 def repository_root() -> Path:
@@ -22,6 +24,7 @@ def repository_root() -> Path:
 
 
 app = FastAPI(title="Rev2Agent GUI")
+_phase_services: dict[tuple[Path, Path], PhaseJobService] = {}
 
 
 def runtime_store() -> RuntimeStore:
@@ -29,11 +32,16 @@ def runtime_store() -> RuntimeStore:
 
 
 def phase_service() -> PhaseJobService:
-    return PhaseJobService(
-        repo_root=repository_root(),
-        store=runtime_store(),
-        adapter=CodexSdkAdapter(),
-    )
+    root = repository_root()
+    store = runtime_store()
+    key = (root, store.db_path)
+    if key not in _phase_services:
+        _phase_services[key] = PhaseJobService(
+            repo_root=root,
+            store=store,
+            adapter=CodexSdkAdapter(),
+        )
+    return _phase_services[key]
 
 
 def artifact_service() -> ArtifactService:
@@ -50,6 +58,10 @@ class StartPhaseJobRequest(BaseModel):
     approved: bool = False
 
 
+class CreateProjectRequest(BaseModel):
+    research_idea: str = ""
+
+
 class ContinueJobRequest(BaseModel):
     action: str
     prompt: str
@@ -59,14 +71,98 @@ class ApprovalRequest(BaseModel):
     user_action: str
 
 
+def ensure_phase_zero_setup(root: Path) -> None:
+    if not setup_is_complete(root):
+        raise HTTPException(
+            status_code=409,
+            detail="Phase 0 setup must be completed before starting projects or phase jobs.",
+        )
+
+
+def ensure_project_phase_action(root: Path, project_dir: str, phase: int, action: str) -> None:
+    state = load_project_state(root, root / project_dir)
+    current_phase = _phase_number(state.get("current_phase"))
+    if current_phase is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Current project phase is unknown; refresh project state before starting jobs.",
+        )
+    if current_phase != phase:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Current project phase is {current_phase}; refusing to run phase {phase}.",
+        )
+    ensure_experiment_action_is_phase_five(phase, action)
+
+
+def ensure_continue_action_allowed(root: Path, job_id: str, action: str) -> None:
+    try:
+        job = runtime_store().get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}") from exc
+
+    job_phase = _phase_number(job.get("phase"))
+    if job_phase is None:
+        raise HTTPException(status_code=409, detail="Job phase is unknown; refusing to continue.")
+
+    project_dir = str(job.get("project_dir") or "")
+    state = load_project_state(root, root / project_dir)
+    current_phase = _phase_number(state.get("current_phase"))
+    if current_phase != job_phase:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Current project phase is {current_phase}; refusing to continue a phase {job_phase} job.",
+        )
+    ensure_experiment_action_is_phase_five(job_phase, action)
+
+
+def ensure_experiment_action_is_phase_five(phase: int, action: str) -> None:
+    if _is_experiment_execution_action(action) and phase != 5:
+        raise HTTPException(
+            status_code=409,
+            detail="Experiment scripts can only be run in Phase 5.",
+        )
+
+
+def _is_experiment_execution_action(action: str) -> bool:
+    normalized = action.lower()
+    return (
+        "run experiment" in normalized
+        or "experiment scripts" in normalized
+        or "execute experiment" in normalized
+    )
+
+
+def _phase_number(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 @app.get("/api/projects")
 def list_projects():
     return discover_projects(repository_root())
 
 
 @app.post("/api/projects")
-def create_project():
-    return create_project_draft(repository_root())
+def create_project(request: CreateProjectRequest | None = None):
+    root = repository_root()
+    ensure_phase_zero_setup(root)
+    return create_project_draft(root, research_idea=request.research_idea if request else "")
+
+
+@app.post("/api/projects/{project_dir}/archive")
+def archive_project_endpoint(project_dir: str):
+    root = repository_root()
+    ensure_phase_zero_setup(root)
+    try:
+        return archive_project(root, project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/projects/{project_dir}/state")
@@ -81,6 +177,9 @@ def get_phase_status(project_dir: str) -> dict[str, Any]:
 
 @app.post("/api/projects/{project_dir}/phase/{phase}/jobs")
 async def start_phase_job(project_dir: str, phase: int, request: StartPhaseJobRequest):
+    root = repository_root()
+    ensure_phase_zero_setup(root)
+    ensure_project_phase_action(root, project_dir, phase, request.action)
     return await phase_service().start_phase_job(
         project_dir=project_dir,
         phase=phase,
@@ -117,6 +216,9 @@ def submit_approval(job_id: str, request: ApprovalRequest):
 
 @app.post("/api/jobs/{job_id}/continue")
 async def continue_job(job_id: str, request: ContinueJobRequest):
+    root = repository_root()
+    ensure_phase_zero_setup(root)
+    ensure_continue_action_allowed(root, job_id, request.action)
     return await phase_service().continue_job(
         job_id,
         action=request.action,
@@ -147,3 +249,10 @@ def validate_manuscript(project_dir: str):
 @app.get("/api/settings")
 def settings_status():
     return build_settings_status(repository_root(), sdk_status=get_sdk_status())
+
+
+@app.post("/api/setup/host-only")
+def complete_host_only_setup():
+    root = repository_root()
+    write_host_only_setup(root)
+    return build_settings_status(root, sdk_status=get_sdk_status())

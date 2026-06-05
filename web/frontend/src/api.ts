@@ -80,6 +80,9 @@ export interface SettingsStatus {
     root: string;
     config_exists: boolean;
   };
+  environment: {
+    platform: string;
+  };
   tools: {
     latex: ToolStatus;
     python: {
@@ -104,10 +107,22 @@ export async function listProjects(): Promise<ProjectDiscoveryResult> {
   return response.json();
 }
 
-export async function createProjectDraft(): Promise<ProjectSummary> {
-  const response = await fetch("/api/projects", { method: "POST" });
+export async function createProjectDraft(researchIdea: string): Promise<ProjectSummary> {
+  const response = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ research_idea: researchIdea })
+  });
   if (!response.ok) {
     throw new Error(`Failed to start project: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function archiveProject(project: ProjectSummary): Promise<ProjectSummary> {
+  const response = await fetch(`/api/projects/${project.project_dir}/archive`, { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Failed to archive project: ${response.status}`);
   }
   return response.json();
 }
@@ -200,6 +215,14 @@ export async function getSettings(): Promise<SettingsStatus> {
   const response = await fetch("/api/settings");
   if (!response.ok) {
     throw new Error(`Failed to load settings: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function completeHostOnlySetup(): Promise<SettingsStatus> {
+  const response = await fetch("/api/setup/host-only", { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`Failed to complete Phase 0 setup: ${response.status}`);
   }
   return response.json();
 }

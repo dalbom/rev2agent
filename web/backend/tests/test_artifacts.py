@@ -52,6 +52,33 @@ def test_index_project_artifacts_by_known_types(tmp_path: Path) -> None:
     } <= types
 
 
+def test_index_project_is_idempotent_by_artifact_path(tmp_path: Path) -> None:
+    make_project(tmp_path)
+    store = RuntimeStore(tmp_path / "runtime.sqlite3")
+    service = ArtifactService(repo_root=tmp_path, store=store)
+
+    first = service.index_project("demo_project")
+    second = service.index_project("demo_project")
+
+    assert len(second) == len(first)
+    assert len({artifact["path"] for artifact in second}) == len(second)
+
+
+def test_index_project_removes_stale_artifact_records(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    store = RuntimeStore(tmp_path / "runtime.sqlite3")
+    service = ArtifactService(repo_root=tmp_path, store=store)
+    artifacts = service.index_project("demo_project")
+    summary = next(item for item in artifacts if item["title"] == "phase1_topic.md")
+    (project / "summaries" / "phase1_topic.md").unlink()
+
+    refreshed = service.index_project("demo_project")
+
+    assert summary["artifact_id"] not in {artifact["artifact_id"] for artifact in refreshed}
+    with pytest.raises(KeyError):
+        store.get_artifact(summary["artifact_id"])
+
+
 def test_read_safe_text_artifact_content(tmp_path: Path) -> None:
     make_project(tmp_path)
     store = RuntimeStore(tmp_path / "runtime.sqlite3")

@@ -2,7 +2,31 @@
 
 This folder contains a local browser GUI for Rev2Agent. The existing prompt-driven workflow remains unchanged; the GUI adds a FastAPI backend, SQLite runtime state, and a React/Vite frontend that drives Rev2Agent phases through the Codex Python SDK adapter.
 
-## Backend
+## Quick Start
+
+Windows:
+
+```text
+From the repository root, double-click scripts\start-gui.bat
+```
+
+macOS:
+
+```text
+From the repository root, double-click scripts/start-gui.command
+```
+
+Both launchers create the backend Python environment, install frontend packages when needed, start the backend and frontend servers, and open `http://127.0.0.1:5173`.
+
+If macOS blocks the `.command` file because it is not executable, run this once from the repository root:
+
+```bash
+chmod +x scripts/start-gui.command
+```
+
+## Manual Development Start
+
+### Backend
 
 ```powershell
 cd web\backend
@@ -20,7 +44,7 @@ web/backend/.data/rev2agent_gui.sqlite3
 
 SQLite is used only for GUI jobs, SDK thread metadata, event records, approvals, and artifact indexes. Project research state remains authoritative in each project directory's `.research_state.json`.
 
-## Frontend
+### Frontend
 
 ```powershell
 cd web\frontend

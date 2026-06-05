@@ -33,7 +33,7 @@ def get_repository_status(repo_root: Path) -> RepositoryStatus:
 
 def discover_projects(repo_root: Path) -> ProjectDiscoveryResult:
     status = get_repository_status(repo_root)
-    projects: list[ProjectSummary] = []
+    projects_by_dir: dict[str, ProjectSummary] = {}
 
     for child in sorted(status.root.iterdir(), key=lambda path: path.name.lower()):
         if not child.is_dir():
@@ -41,13 +41,17 @@ def discover_projects(repo_root: Path) -> ProjectDiscoveryResult:
         state_path = child / ".research_state.json"
         if not state_path.exists():
             continue
-        projects.append(_summarize_project(status.root, child, state_path))
+        project = _summarize_project(status.root, child, state_path)
+        if project.project_status == "archived":
+            continue
+        existing = projects_by_dir.get(project.project_dir)
+        projects_by_dir[project.project_dir] = _preferred_project_summary(existing, project)
 
     return ProjectDiscoveryResult(
         root=status.root,
         setup_required=status.setup_required,
         config_exists=status.config_exists,
-        projects=projects,
+        projects=list(projects_by_dir.values()),
     )
 
 
@@ -62,7 +66,7 @@ def load_project_state(repo_root: Path, project_path: Path) -> dict[str, Any]:
         raise FileNotFoundError(f"Missing research state: {state_path}")
 
     try:
-        data = json.loads(state_path.read_text(encoding="utf-8"))
+        data = json.loads(state_path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid research state JSON: {exc.msg}") from exc
 
@@ -71,16 +75,18 @@ def load_project_state(repo_root: Path, project_path: Path) -> dict[str, Any]:
     return data
 
 
-def create_project_draft(repo_root: Path) -> ProjectSummary:
+def create_project_draft(repo_root: Path, *, research_idea: str = "") -> ProjectSummary:
     root = repo_root.resolve()
-    project_path = root / "_new_project_draft"
+    project_path = _next_available_draft_path(root)
     project_path.mkdir(exist_ok=True)
     state_path = project_path / ".research_state.json"
+    idea = research_idea.strip()
 
     if not state_path.exists():
         now = _utc_now()
+        project_dir = project_path.name
         state = {
-            "project_dir": "_new_project_draft",
+            "project_dir": project_dir,
             "current_phase": 1,
             "sub_step": None,
             "current_round": 0,
@@ -90,7 +96,7 @@ def create_project_draft(repo_root: Path) -> ProjectSummary:
             "updated_at": now,
             "topic": {
                 "broad_topic": "",
-                "specific_topic": "",
+                "specific_topic": idea,
                 "research_question": "",
                 "positioning": "",
                 "target_venue": "",
@@ -100,7 +106,26 @@ def create_project_draft(repo_root: Path) -> ProjectSummary:
             "phase_history": [],
         }
         state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    elif idea:
+        state = load_project_state(root, project_path)
+        topic = state.get("topic") if isinstance(state.get("topic"), dict) else {}
+        topic["specific_topic"] = idea
+        state["topic"] = topic
+        state["updated_at"] = _utc_now()
+        state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
+    return _summarize_project(root, project_path, state_path)
+
+
+def archive_project(repo_root: Path, project_dir: str) -> ProjectSummary:
+    root = repo_root.resolve()
+    project_path = root / project_dir
+    state = load_project_state(root, project_path)
+    state["project_status"] = "archived"
+    state["phase_status"] = "archived"
+    state["updated_at"] = _utc_now()
+    state_path = project_path.resolve() / ".research_state.json"
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     return _summarize_project(root, project_path, state_path)
 
 
@@ -131,6 +156,46 @@ def _summarize_project(root: Path, project_path: Path, state_path: Path) -> Proj
         updated_at=state.get("updated_at") if isinstance(state.get("updated_at"), str) else None,
         active_runs=active_runs,
     )
+
+
+def _next_available_draft_path(root: Path) -> Path:
+    for index in range(1, 100):
+        name = "_new_project_draft" if index == 1 else f"_new_project_draft_{index}"
+        candidate = root / name
+        state_path = candidate / ".research_state.json"
+        if not state_path.exists():
+            return candidate
+        try:
+            state = load_project_state(root, candidate)
+        except (FileNotFoundError, ValueError):
+            return candidate
+        if state.get("project_dir") == name and not _draft_has_artifacts(candidate):
+            return candidate
+    raise RuntimeError("Could not find an available draft project path")
+
+
+def _draft_has_artifacts(project_path: Path) -> bool:
+    for path in project_path.rglob("*"):
+        if path.is_file() and path.name != ".research_state.json":
+            return True
+    return False
+
+
+def _preferred_project_summary(
+    existing: ProjectSummary | None,
+    candidate: ProjectSummary,
+) -> ProjectSummary:
+    if existing is None:
+        return candidate
+    if _is_canonical_project_path(candidate) and not _is_canonical_project_path(existing):
+        return candidate
+    if candidate.healthy and not existing.healthy:
+        return candidate
+    return existing
+
+
+def _is_canonical_project_path(project: ProjectSummary) -> bool:
+    return project.state_path.parent.name == project.project_dir
 
 
 def _topic_label(topic: dict[str, Any]) -> str:

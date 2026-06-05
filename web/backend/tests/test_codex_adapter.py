@@ -10,6 +10,7 @@ from app.codex_adapter import (
     FakeCodexAdapter,
     TurnResultData,
     get_sdk_status,
+    summarize_notification,
 )
 
 
@@ -81,3 +82,90 @@ def test_real_adapter_can_be_constructed_without_starting_sdk_runtime() -> None:
     adapter = CodexSdkAdapter()
 
     assert adapter is not None
+
+
+def test_notification_summary_prefers_agent_message_text() -> None:
+    class AgentMessage:
+        text = "Here is the final answer."
+
+    class ThreadItem:
+        root = AgentMessage()
+
+    class Payload:
+        item = ThreadItem()
+
+    class Root:
+        method = "item/completed"
+        payload = Payload()
+
+    class Notification:
+        root = Root()
+
+    assert summarize_notification(Notification()) == "Here is the final answer."
+
+
+@pytest.mark.asyncio
+async def test_real_adapter_streams_turn_on_fresh_thread_without_resuming(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeSandbox:
+        read_only = "read_only"
+        workspace_write = "workspace_write"
+        full_access = "full_access"
+
+    class FakeNotification:
+        message = "streamed from fresh thread"
+
+        def model_dump(self, mode: str = "json") -> dict[str, str]:
+            return {"message": self.message, "mode": mode}
+
+    class FakeHandle:
+        id = "sdk-turn-1"
+
+        async def stream(self):
+            yield FakeNotification()
+
+    class FakeThread:
+        id = "sdk-thread-1"
+
+        def __init__(self) -> None:
+            self.turn_inputs: list[str] = []
+
+        async def turn(self, prompt: str, *, sandbox: str):
+            self.turn_inputs.append(prompt)
+            return FakeHandle()
+
+    class FakeAsyncCodex:
+        instances: list["FakeAsyncCodex"] = []
+
+        def __init__(self) -> None:
+            self.thread = FakeThread()
+            self.closed = False
+            FakeAsyncCodex.instances.append(self)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> None:
+            await self.close()
+
+        async def close(self) -> None:
+            self.closed = True
+
+        async def thread_start(self, *, cwd: str, sandbox: str):
+            return self.thread
+
+        async def thread_resume(self, thread_id: str, *, sandbox: str):
+            raise AssertionError("freshly started threads should stream through their existing thread handle")
+
+    monkeypatch.setattr(
+        "app.codex_adapter.load_sdk_classes",
+        lambda: (FakeAsyncCodex, FakeSandbox),
+    )
+    adapter = CodexSdkAdapter()
+
+    thread = await adapter.start_thread(project_dir="demo", phase=1, sandbox="workspace_write")
+    stream = [event async for event in adapter.stream_turn(thread.thread_id, "Run phase", sandbox="workspace_write")]
+
+    assert thread.thread_id == "sdk-thread-1"
+    assert [event.summary for event in stream] == ["streamed from fresh thread"]
+    assert FakeAsyncCodex.instances[0].thread.turn_inputs == ["Run phase"]
+    assert FakeAsyncCodex.instances[0].closed is True

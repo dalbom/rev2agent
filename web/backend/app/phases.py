@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,21 +9,10 @@ from uuid import uuid4
 
 from .codex_adapter import FakeCodexAdapter
 from .database import RuntimeStore, utc_now
+from .prompt_bundle import build_phase_prompt_bundle
+from .prompt_bundle import phase_prompt_path
 from .projects import PHASE_LABELS, load_project_state
 from .safety import classify_action
-
-
-PHASE_PROMPTS: dict[int, str] = {
-    0: "00_setup.md",
-    1: "01_interview.md",
-    2: "02_literature_search.md",
-    3: "03_research_plan.md",
-    4: "04_experiment_design.md",
-    5: "05_experiment_execution.md",
-    6: "06_result_analysis.md",
-    7: "07_manuscript_writing.md",
-    8: "08_manuscript_review.md",
-}
 
 
 @dataclass(frozen=True)
@@ -59,7 +49,13 @@ class PhaseJobService:
         approved: bool = False,
     ) -> PhaseJobResult:
         project_path = self._project_path(project_dir)
-        load_project_state(self.repo_root, project_path)
+        state = load_project_state(self.repo_root, project_path)
+        bundled_prompt = build_phase_prompt_bundle(
+            repo_root=self.repo_root,
+            project_path=project_path,
+            state=state,
+            user_prompt=prompt,
+        )
         decision = classify_action(phase=phase, action=action)
         job_id = f"job-{uuid4().hex}"
 
@@ -95,11 +91,40 @@ class PhaseJobService:
                 message=decision.impact,
             )
 
-        thread = await self.adapter.start_thread(
-            project_dir=str(project_path),
-            phase=phase,
-            sandbox=decision.sandbox.value,
-        )
+        try:
+            thread = await self.adapter.start_thread(
+                project_dir=str(project_path),
+                phase=phase,
+                sandbox=decision.sandbox.value,
+            )
+        except Exception as exc:
+            self.store.create_job(
+                job_id=job_id,
+                project_dir=project_dir,
+                phase=phase,
+                sub_step=None,
+                role="main",
+                thread_id=None,
+                turn_id=None,
+                status="failed",
+                approval_state="approved" if approved else "not_required",
+                sandbox=decision.sandbox.value,
+                completed_at=utc_now(),
+                last_error=str(exc),
+            )
+            self.store.add_event(
+                job_id=job_id,
+                event_type="error",
+                summary=str(exc),
+                raw_payload={"error": str(exc)},
+            )
+            return PhaseJobResult(
+                job_id=job_id,
+                requires_approval=False,
+                status="failed",
+                sandbox=decision.sandbox.value,
+                message=str(exc),
+            )
         self.store.create_job(
             job_id=job_id,
             project_dir=project_dir,
@@ -114,17 +139,47 @@ class PhaseJobService:
         )
 
         turn_id: str | None = None
-        async for event in self.adapter.stream_turn(
-            thread.thread_id,
-            prompt,
-            sandbox=decision.sandbox.value,
-        ):
-            turn_id = event.turn_id
-            self.store.add_event(
+        stream_failure_message: str | None = None
+        try:
+            async for event in self.adapter.stream_turn(
+                thread.thread_id,
+                bundled_prompt,
+                sandbox=decision.sandbox.value,
+            ):
+                if event.turn_id != turn_id:
+                    turn_id = event.turn_id
+                    self.store.update_job(job_id, turn_id=turn_id)
+                self.store.add_event(
+                    job_id=job_id,
+                    event_type=event.event_type,
+                    summary=event.summary,
+                    raw_payload=event.raw_payload,
+                )
+                stream_failure_message = stream_failure_message or _stream_failure_message(event)
+        except asyncio.CancelledError:
+            self._cancel_job(
                 job_id=job_id,
-                event_type=event.event_type,
-                summary=event.summary,
-                raw_payload=event.raw_payload,
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
+            )
+            raise
+        except Exception as exc:
+            return self._fail_job(
+                job_id=job_id,
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
+                error=exc,
+            )
+
+        if stream_failure_message:
+            return self._fail_job(
+                job_id=job_id,
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
+                error=RuntimeError(stream_failure_message),
             )
 
         self.store.update_job(
@@ -192,12 +247,28 @@ class PhaseJobService:
 
         project_dir = job["project_dir"]
         project_path = self._project_path(project_dir)
-        decision = classify_action(phase=job["phase"], action=action)
-        thread = await self.adapter.start_thread(
-            project_dir=str(project_path),
-            phase=job["phase"],
-            sandbox=decision.sandbox.value,
+        state = load_project_state(self.repo_root, project_path)
+        bundled_prompt = build_phase_prompt_bundle(
+            repo_root=self.repo_root,
+            project_path=project_path,
+            state=state,
+            user_prompt=prompt,
         )
+        decision = classify_action(phase=job["phase"], action=action)
+        try:
+            thread = await self.adapter.start_thread(
+                project_dir=str(project_path),
+                phase=job["phase"],
+                sandbox=decision.sandbox.value,
+            )
+        except Exception as exc:
+            return self._fail_job(
+                job_id=job_id,
+                sandbox=decision.sandbox.value,
+                thread_id=None,
+                turn_id=None,
+                error=exc,
+            )
         self.store.update_job(
             job_id,
             thread_id=thread.thread_id,
@@ -206,17 +277,47 @@ class PhaseJobService:
         )
 
         turn_id: str | None = None
-        async for event in self.adapter.stream_turn(
-            thread.thread_id,
-            prompt,
-            sandbox=decision.sandbox.value,
-        ):
-            turn_id = event.turn_id
-            self.store.add_event(
+        stream_failure_message: str | None = None
+        try:
+            async for event in self.adapter.stream_turn(
+                thread.thread_id,
+                bundled_prompt,
+                sandbox=decision.sandbox.value,
+            ):
+                if event.turn_id != turn_id:
+                    turn_id = event.turn_id
+                    self.store.update_job(job_id, turn_id=turn_id)
+                self.store.add_event(
+                    job_id=job_id,
+                    event_type=event.event_type,
+                    summary=event.summary,
+                    raw_payload=event.raw_payload,
+                )
+                stream_failure_message = stream_failure_message or _stream_failure_message(event)
+        except asyncio.CancelledError:
+            self._cancel_job(
                 job_id=job_id,
-                event_type=event.event_type,
-                summary=event.summary,
-                raw_payload=event.raw_payload,
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
+            )
+            raise
+        except Exception as exc:
+            return self._fail_job(
+                job_id=job_id,
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
+                error=exc,
+            )
+
+        if stream_failure_message:
+            return self._fail_job(
+                job_id=job_id,
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
+                error=RuntimeError(stream_failure_message),
             )
 
         self.store.update_job(
@@ -237,6 +338,62 @@ class PhaseJobService:
     def list_events(self, job_id: str) -> list[dict[str, Any]]:
         return self.store.list_events(job_id)
 
+    def _fail_job(
+        self,
+        *,
+        job_id: str,
+        sandbox: str,
+        thread_id: str | None,
+        turn_id: str | None,
+        error: Exception,
+    ) -> PhaseJobResult:
+        message = str(error) or type(error).__name__
+        self.store.update_job(
+            job_id,
+            turn_id=turn_id,
+            status="failed",
+            completed_at=utc_now(),
+            last_error=message,
+        )
+        self.store.add_event(
+            job_id=job_id,
+            event_type="error",
+            summary=message,
+            raw_payload={"error": message},
+        )
+        return PhaseJobResult(
+            job_id=job_id,
+            requires_approval=False,
+            status="failed",
+            sandbox=sandbox,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            message=message,
+        )
+
+    def _cancel_job(
+        self,
+        *,
+        job_id: str,
+        sandbox: str,
+        thread_id: str | None,
+        turn_id: str | None,
+    ) -> None:
+        message = "Job cancelled before completion."
+        self.store.update_job(
+            job_id,
+            turn_id=turn_id,
+            status="cancelled",
+            completed_at=utc_now(),
+            last_error=message,
+        )
+        self.store.add_event(
+            job_id=job_id,
+            event_type="cancelled",
+            summary=message,
+            raw_payload={"thread_id": thread_id, "turn_id": turn_id, "sandbox": sandbox},
+        )
+
     def phase_status(self, project_dir: str) -> dict[str, Any]:
         state = load_project_state(self.repo_root, self._project_path(project_dir))
         phase = state.get("current_phase")
@@ -253,12 +410,19 @@ class PhaseJobService:
         return (self.repo_root / project_dir).resolve()
 
 
-def phase_prompt_path(repo_root: Path, phase: int) -> Path:
-    try:
-        filename = PHASE_PROMPTS[phase]
-    except KeyError as exc:
-        raise ValueError(f"Unknown phase: {phase}") from exc
-    return repo_root / "prompts" / filename
+def _stream_failure_message(event: Any) -> str | None:
+    event_type = str(getattr(event, "event_type", "") or "")
+    summary = str(getattr(event, "summary", "") or "")
+    raw_payload = getattr(event, "raw_payload", None)
+    if event_type == "error":
+        return summary or "SDK stream emitted an error event."
+    if event_type in {"turn/completed", "turn_completed"} and "failed" in summary.lower():
+        return summary
+    if isinstance(raw_payload, dict):
+        raw_text = json.dumps(raw_payload, ensure_ascii=False).lower()
+        if event_type in {"turn/completed", "turn_completed"} and '"failed"' in raw_text:
+            return summary or "SDK turn failed."
+    return None
 
 
 def format_sse_event(event: dict[str, Any]) -> str:

@@ -21,6 +21,14 @@ class ArtifactService:
         if not project_path.exists():
             raise FileNotFoundError(project_dir)
 
+        known_paths: set[str] = set()
+        for artifact in self.store.list_artifacts(project_dir):
+            path = (self.repo_root / artifact["path"]).resolve()
+            if is_relative_to(path, project_path) and path.exists():
+                known_paths.add(artifact["path"])
+                continue
+            self.store.delete_artifact(artifact["artifact_id"])
+
         for path in sorted(project_path.rglob("*")):
             if not path.is_file() or path.name == ".research_state.json":
                 continue
@@ -28,6 +36,8 @@ class ArtifactService:
             if artifact_type is None:
                 continue
             relative_repo_path = path.relative_to(self.repo_root).as_posix()
+            if relative_repo_path in known_paths:
+                continue
             self.store.add_artifact(
                 project_dir=project_dir,
                 job_id=None,
@@ -36,6 +46,7 @@ class ArtifactService:
                 title=path.name,
                 validation_status="unknown",
             )
+            known_paths.add(relative_repo_path)
         return self.store.list_artifacts(project_dir)
 
     def read_artifact(self, project_dir: str, artifact_id: int) -> dict[str, Any]:

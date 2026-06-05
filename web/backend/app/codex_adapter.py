@@ -121,33 +121,54 @@ class FakeCodexAdapter:
 class CodexSdkAdapter:
     def __init__(self) -> None:
         self._active_turns: dict[tuple[str, str], Any] = {}
+        self._thread_clients: dict[str, Any] = {}
+        self._thread_handles: dict[str, Any] = {}
 
     async def start_thread(self, *, project_dir: str, phase: int, sandbox: str) -> ThreadData:
         AsyncCodex, Sandbox = load_sdk_classes()
-        async with AsyncCodex() as codex:
+        codex = AsyncCodex()
+        try:
+            await codex.__aenter__()
             thread = await codex.thread_start(
                 cwd=project_dir,
                 sandbox=to_sdk_sandbox(Sandbox, sandbox),
             )
-            return ThreadData(thread_id=thread.id)
+        except Exception:
+            await codex.close()
+            raise
+        self._thread_clients[thread.id] = codex
+        self._thread_handles[thread.id] = thread
+        return ThreadData(thread_id=thread.id)
 
     async def resume_thread(self, thread_id: str, *, sandbox: str) -> ThreadData:
         AsyncCodex, Sandbox = load_sdk_classes()
-        async with AsyncCodex() as codex:
+        codex = AsyncCodex()
+        try:
+            await codex.__aenter__()
             thread = await codex.thread_resume(
                 thread_id,
                 sandbox=to_sdk_sandbox(Sandbox, sandbox),
             )
-            return ThreadData(thread_id=thread.id)
+        except Exception:
+            await codex.close()
+            raise
+        self._thread_clients[thread.id] = codex
+        self._thread_handles[thread.id] = thread
+        return ThreadData(thread_id=thread.id)
 
     async def run_turn(self, thread_id: str, prompt: str, *, sandbox: str) -> TurnResultData:
         AsyncCodex, Sandbox = load_sdk_classes()
+        thread = self._thread_handles.get(thread_id)
+        if thread is not None:
+            try:
+                result = await thread.run(prompt, sandbox=to_sdk_sandbox(Sandbox, sandbox))
+                return turn_result_from_sdk(result)
+            finally:
+                await self._close_thread(thread_id)
+
         async with AsyncCodex() as codex:
-            thread = await codex.thread_resume(
-                thread_id,
-                sandbox=to_sdk_sandbox(Sandbox, sandbox),
-            )
-            result = await thread.run(prompt, sandbox=to_sdk_sandbox(Sandbox, sandbox))
+            resumed = await codex.thread_resume(thread_id, sandbox=to_sdk_sandbox(Sandbox, sandbox))
+            result = await resumed.run(prompt, sandbox=to_sdk_sandbox(Sandbox, sandbox))
             return turn_result_from_sdk(result)
 
     async def stream_turn(
@@ -158,18 +179,28 @@ class CodexSdkAdapter:
         sandbox: str,
     ) -> AsyncIterator[StreamEventData]:
         AsyncCodex, Sandbox = load_sdk_classes()
-        async with AsyncCodex() as codex:
-            thread = await codex.thread_resume(
-                thread_id,
-                sandbox=to_sdk_sandbox(Sandbox, sandbox),
-            )
+        thread = self._thread_handles.get(thread_id)
+        if thread is None:
+            codex = AsyncCodex()
+            try:
+                await codex.__aenter__()
+                thread = await codex.thread_resume(
+                    thread_id,
+                    sandbox=to_sdk_sandbox(Sandbox, sandbox),
+                )
+            except Exception:
+                await codex.close()
+                raise
+            self._thread_clients[thread.id] = codex
+            self._thread_handles[thread.id] = thread
+        try:
             handle = await thread.turn(prompt, sandbox=to_sdk_sandbox(Sandbox, sandbox))
             turn_id = getattr(handle, "id", None) or "unknown"
             self._active_turns[(thread_id, turn_id)] = handle
             try:
                 async for notification in handle.stream():
                     yield StreamEventData(
-                        event_type=type(notification).__name__,
+                        event_type=notification_event_type(notification),
                         summary=summarize_notification(notification),
                         thread_id=thread_id,
                         turn_id=turn_id,
@@ -177,6 +208,14 @@ class CodexSdkAdapter:
                     )
             finally:
                 self._active_turns.pop((thread_id, turn_id), None)
+        finally:
+            await self._close_thread(thread_id)
+
+    async def _close_thread(self, thread_id: str) -> None:
+        codex = self._thread_clients.pop(thread_id, None)
+        self._thread_handles.pop(thread_id, None)
+        if codex is not None:
+            await codex.close()
 
     async def interrupt(self, thread_id: str, turn_id: str) -> bool:
         handle = self._active_turns.get((thread_id, turn_id))
@@ -212,10 +251,33 @@ def turn_result_from_sdk(result: Any) -> TurnResultData:
 
 
 def summarize_notification(notification: Any) -> str:
-    for attr in ("message", "text", "summary"):
-        value = getattr(notification, attr, None)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    root = getattr(notification, "root", None)
+    payload = getattr(root, "payload", None) or getattr(notification, "payload", None)
+    for source in (
+        notification,
+        root,
+        payload,
+        getattr(payload, "turn", None),
+        getattr(getattr(payload, "item", None), "root", None),
+    ):
+        for attr in ("message", "text", "summary", "delta", "status"):
+            value = getattr(source, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if value is not None and attr == "status":
+                return str(value)
+    method = notification_event_type(notification)
+    if isinstance(method, str) and method.strip():
+        return method.strip()
+    return type(notification).__name__
+
+
+def notification_event_type(notification: Any) -> str:
+    root = getattr(notification, "root", None)
+    for source in (root, notification):
+        method = getattr(source, "method", None)
+        if isinstance(method, str) and method.strip():
+            return method.strip()
     return type(notification).__name__
 
 

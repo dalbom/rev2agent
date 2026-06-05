@@ -225,6 +225,10 @@ class RuntimeStore:
             raise KeyError(artifact_id)
         return dict(row)
 
+    def delete_artifact(self, artifact_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute("delete from artifacts where artifact_id = ?", (artifact_id,))
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row

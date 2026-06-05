@@ -18,13 +18,16 @@ def build_settings_status(
     python_version: str | None = None,
 ) -> dict[str, Any]:
     root = repo_root.resolve()
-    tectonic_path = which("tectonic")
+    tectonic_path = _find_tectonic(root, which)
     pnpm_path = which("pnpm")
     return {
         "codex_sdk": asdict(sdk_status),
         "repository": {
             "root": root,
             "config_exists": (root / ".rev2agent_config.json").exists(),
+        },
+        "environment": {
+            "platform": platform.system(),
         },
         "tools": {
             "latex": {
@@ -43,3 +46,20 @@ def build_settings_status(
             },
         },
     }
+
+
+def _find_tectonic(repo_root: Path, which: Callable[[str], str | None]) -> str | None:
+    path_tectonic = which("tectonic")
+    if path_tectonic:
+        return path_tectonic
+
+    candidates = [
+        repo_root / "tectonic.exe",
+        repo_root / "tectonic",
+        repo_root.parent / "tectonic.exe",
+        repo_root.parent / "tectonic",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
