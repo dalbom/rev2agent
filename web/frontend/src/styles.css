@@ -191,6 +191,7 @@ h3 {
 }
 
 .project-card-status {
+  align-items: flex-start;
   display: flex;
   justify-content: flex-start;
   min-width: 0;
