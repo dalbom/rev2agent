@@ -302,12 +302,14 @@ function ProjectHome({
       <div className="project-grid" aria-label="Existing research projects">
         {projects.map((project) => (
           <article className="project-card" key={project.project_dir}>
+            <div className="project-card-status">
+              <StatusChip label={project.phase_status} tone={project.healthy ? "ok" : "warn"} />
+            </div>
             <div className="card-head">
-              <div>
+              <div className="project-card-title">
                 <h2>{project.project_dir}</h2>
                 <p>{project.topic || "Topic not set yet"}</p>
               </div>
-              <StatusChip label={project.phase_status} tone={project.healthy ? "ok" : "warn"} />
             </div>
             <div className="phase-row">
               <strong>{project.phase_label}</strong>

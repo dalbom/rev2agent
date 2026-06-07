@@ -157,6 +157,11 @@ h3 {
   box-shadow: 0 1px 2px rgba(23, 32, 38, 0.05);
 }
 
+.project-card {
+  display: grid;
+  gap: 12px;
+}
+
 .card-head,
 .phase-title,
 .panel-heading,
@@ -183,6 +188,23 @@ h3 {
 .phase-row,
 .section-toolbar {
   justify-content: space-between;
+}
+
+.project-card-status {
+  display: flex;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.project-card-title {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-card-title h2,
+.project-card-title p {
+  overflow-wrap: anywhere;
 }
 
 .project-home {
@@ -239,7 +261,7 @@ h3 {
 }
 
 .phase-row {
-  margin: 18px 0;
+  margin: 6px 0;
   padding: 12px;
   background: #eef4f1;
   border-radius: 8px;
@@ -274,11 +296,13 @@ dd {
 .status-chip {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
   font-size: 0.82rem;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .status-chip.ok {
