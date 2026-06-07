@@ -196,6 +196,12 @@ h3 {
   min-width: 0;
 }
 
+.project-card-status .status-chip {
+  justify-content: center;
+  width: 10rem;
+  white-space: nowrap;
+}
+
 .project-card-title {
   display: grid;
   gap: 8px;
