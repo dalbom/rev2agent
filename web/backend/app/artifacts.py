@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,7 @@ class ArtifactService:
                 continue
             self.store.delete_artifact(artifact["artifact_id"])
 
-        for path in sorted(project_path.rglob("*")):
+        for path in sorted(project_path.rglob("*"), key=natural_path_key):
             if not path.is_file() or path.name == ".research_state.json":
                 continue
             artifact_type = artifact_type_for(project_path, path)
@@ -47,7 +48,7 @@ class ArtifactService:
                 validation_status="unknown",
             )
             known_paths.add(relative_repo_path)
-        return self.store.list_artifacts(project_dir)
+        return sorted(self.store.list_artifacts(project_dir), key=artifact_sort_key)
 
     def read_artifact(self, project_dir: str, artifact_id: int) -> dict[str, Any]:
         artifact = self.store.get_artifact(artifact_id)
@@ -130,6 +131,14 @@ def mime_type_for(path: Path) -> str:
         return "application/x-tex"
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed or "application/octet-stream"
+
+
+def artifact_sort_key(artifact: dict[str, Any]) -> tuple[tuple[tuple[int, str | int], ...], int]:
+    return natural_path_key(str(artifact["path"])), int(artifact["artifact_id"])
+
+
+def natural_path_key(path: str | Path) -> tuple[tuple[int, str | int], ...]:
+    return tuple((0, int(part)) if part.isdigit() else (1, part.lower()) for part in re.split(r"(\d+)", str(path)))
 
 
 def is_relative_to(path: Path, root: Path) -> bool:

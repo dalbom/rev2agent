@@ -64,6 +64,49 @@ def test_index_project_is_idempotent_by_artifact_path(tmp_path: Path) -> None:
     assert len({artifact["path"] for artifact in second}) == len(second)
 
 
+def test_index_project_returns_round_artifacts_in_natural_order(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    round_paths = [
+        "summaries/round10_gui_stress/round_summary.md",
+        "summaries/round11_gui_stress/round_summary.md",
+        "summaries/round12_gui_stress/round_summary.md",
+        "summaries/round1_gui_stress/round_summary.md",
+        "summaries/round2_gui_stress/round_summary.md",
+        "summaries/round3_gui_stress/round_summary.md",
+    ]
+    for relative_path in round_paths:
+        path = project / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Round\n", encoding="utf-8")
+
+    store = RuntimeStore(tmp_path / "runtime.sqlite3")
+    for relative_path in round_paths:
+        store.add_artifact(
+            project_dir="demo_project",
+            job_id=None,
+            path=f"demo_project/{relative_path}",
+            artifact_type="summary",
+            title=Path(relative_path).name,
+            validation_status="unknown",
+        )
+    service = ArtifactService(repo_root=tmp_path, store=store)
+
+    artifacts = [
+        artifact["path"]
+        for artifact in service.index_project("demo_project")
+        if "round" in artifact["path"]
+    ]
+
+    assert artifacts == [
+        "demo_project/summaries/round1_gui_stress/round_summary.md",
+        "demo_project/summaries/round2_gui_stress/round_summary.md",
+        "demo_project/summaries/round3_gui_stress/round_summary.md",
+        "demo_project/summaries/round10_gui_stress/round_summary.md",
+        "demo_project/summaries/round11_gui_stress/round_summary.md",
+        "demo_project/summaries/round12_gui_stress/round_summary.md",
+    ]
+
+
 def test_index_project_removes_stale_artifact_records(tmp_path: Path) -> None:
     project = make_project(tmp_path)
     store = RuntimeStore(tmp_path / "runtime.sqlite3")
