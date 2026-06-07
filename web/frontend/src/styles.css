@@ -203,6 +203,10 @@ h3 {
   white-space: nowrap;
 }
 
+.project-card .phase-row {
+  align-self: start;
+}
+
 .project-card-title {
   display: grid;
   gap: 8px;
