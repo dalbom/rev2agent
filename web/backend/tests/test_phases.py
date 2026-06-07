@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,26 @@ class FailedTurnAdapter(FakeCodexAdapter):
                 "raw_payload": {"status": "failed", "error": "SDK turn failed"},
             },
         )()
+
+
+class InterruptedTurnAdapter(FakeCodexAdapter):
+    async def stream_turn(self, thread_id: str, prompt: str, *, sandbox: str):
+        yield type(
+            "Event",
+            (),
+            {
+                "event_type": "turn/completed",
+                "summary": "TurnStatus.interrupted",
+                "thread_id": thread_id,
+                "turn_id": "interrupted-turn-1",
+                "raw_payload": {"status": "interrupted"},
+            },
+        )()
+
+
+class MissingTurnHandleAdapter(FakeCodexAdapter):
+    async def interrupt(self, thread_id: str, turn_id: str) -> bool:
+        return False
 
 
 def write_project(root: Path, name: str = "demo_project", phase: int = 2) -> Path:
@@ -205,6 +226,27 @@ async def test_start_phase_job_marks_job_failed_when_sdk_turn_reports_failed(tmp
     assert job["turn_id"] == "failed-turn-1"
     assert "TurnStatus.failed" in job["last_error"]
     assert events[-1]["event_type"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_start_phase_job_marks_job_interrupted_when_sdk_turn_reports_interrupted(tmp_path: Path) -> None:
+    write_project(tmp_path)
+    store = RuntimeStore(tmp_path / "runtime.sqlite3")
+    service = PhaseJobService(repo_root=tmp_path, store=store, adapter=InterruptedTurnAdapter())
+
+    result = await service.start_phase_job(
+        project_dir="demo_project",
+        phase=2,
+        action="Write literature search output",
+        prompt="Find literature workers",
+    )
+
+    job = store.get_job(result.job_id)
+    events = store.list_events(result.job_id)
+    assert result.status == "interrupted"
+    assert job["status"] == "interrupted"
+    assert job["turn_id"] == "interrupted-turn-1"
+    assert events[-1]["event_type"] == "turn/completed"
 
 
 @pytest.mark.asyncio
@@ -369,6 +411,44 @@ async def test_interrupt_updates_status_and_records_event(tmp_path: Path) -> Non
     assert updated["status"] == "interrupted"
     assert events[-1]["event_type"] == "interrupted"
     assert job["turn_id"]
+
+
+@pytest.mark.asyncio
+async def test_interrupt_marks_stale_running_job_when_sdk_handle_is_missing(tmp_path: Path) -> None:
+    write_project(tmp_path)
+    store = RuntimeStore(tmp_path / "runtime.sqlite3")
+    service = PhaseJobService(
+        repo_root=tmp_path,
+        store=store,
+        adapter=MissingTurnHandleAdapter(),
+    )
+    store.create_job(
+        job_id="job-stale",
+        project_dir="demo_project",
+        phase=2,
+        sub_step=None,
+        role="main",
+        thread_id="thread-stale",
+        turn_id="turn-stale",
+        status="running",
+        approval_state="not_required",
+        sandbox="workspace_write",
+    )
+    store.update_job(
+        "job-stale",
+        started_at=(datetime.now(UTC) - timedelta(minutes=31)).isoformat().replace("+00:00", "Z"),
+    )
+
+    interrupted = await service.interrupt_job("job-stale")
+
+    job = store.get_job("job-stale")
+    events = store.list_events("job-stale")
+    assert interrupted is True
+    assert job["status"] == "interrupted"
+    assert job["completed_at"]
+    assert "stale job" in job["last_error"]
+    assert events[-1]["event_type"] == "interrupted"
+    assert events[-1]["raw_payload_json"]
 
 
 def test_format_sse_event_uses_stable_json_payload() -> None:

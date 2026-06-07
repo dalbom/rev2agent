@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -140,6 +141,7 @@ class PhaseJobService:
 
         turn_id: str | None = None
         stream_failure_message: str | None = None
+        stream_was_interrupted = False
         try:
             async for event in self.adapter.stream_turn(
                 thread.thread_id,
@@ -156,6 +158,7 @@ class PhaseJobService:
                     raw_payload=event.raw_payload,
                 )
                 stream_failure_message = stream_failure_message or _stream_failure_message(event)
+                stream_was_interrupted = stream_was_interrupted or _stream_interrupted(event)
         except asyncio.CancelledError:
             self._cancel_job(
                 job_id=job_id,
@@ -180,6 +183,21 @@ class PhaseJobService:
                 thread_id=thread.thread_id,
                 turn_id=turn_id,
                 error=RuntimeError(stream_failure_message),
+            )
+        if stream_was_interrupted:
+            self.store.update_job(
+                job_id,
+                turn_id=turn_id,
+                status="interrupted",
+                completed_at=utc_now(),
+            )
+            return PhaseJobResult(
+                job_id=job_id,
+                requires_approval=False,
+                status="interrupted",
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
             )
 
         self.store.update_job(
@@ -216,6 +234,15 @@ class PhaseJobService:
                 summary="The user interrupted this job.",
                 raw_payload={"thread_id": thread_id, "turn_id": turn_id},
             )
+            return True
+        if self._mark_stale_running_job_interrupted(job):
+            self.store.add_event(
+                job_id=job_id,
+                event_type="interrupted",
+                summary="The job was marked interrupted because it was stale and no active SDK turn could be interrupted.",
+                raw_payload={"thread_id": thread_id, "turn_id": turn_id, "stale": True},
+            )
+            return True
         return interrupted
 
     def submit_approval(self, job_id: str, *, user_action: str) -> dict[str, Any]:
@@ -278,6 +305,7 @@ class PhaseJobService:
 
         turn_id: str | None = None
         stream_failure_message: str | None = None
+        stream_was_interrupted = False
         try:
             async for event in self.adapter.stream_turn(
                 thread.thread_id,
@@ -294,6 +322,7 @@ class PhaseJobService:
                     raw_payload=event.raw_payload,
                 )
                 stream_failure_message = stream_failure_message or _stream_failure_message(event)
+                stream_was_interrupted = stream_was_interrupted or _stream_interrupted(event)
         except asyncio.CancelledError:
             self._cancel_job(
                 job_id=job_id,
@@ -318,6 +347,21 @@ class PhaseJobService:
                 thread_id=thread.thread_id,
                 turn_id=turn_id,
                 error=RuntimeError(stream_failure_message),
+            )
+        if stream_was_interrupted:
+            self.store.update_job(
+                job_id,
+                turn_id=turn_id,
+                status="interrupted",
+                completed_at=utc_now(),
+            )
+            return PhaseJobResult(
+                job_id=job_id,
+                requires_approval=False,
+                status="interrupted",
+                sandbox=decision.sandbox.value,
+                thread_id=thread.thread_id,
+                turn_id=turn_id,
             )
 
         self.store.update_job(
@@ -371,6 +415,22 @@ class PhaseJobService:
             message=message,
         )
 
+    def _mark_stale_running_job_interrupted(self, job: dict[str, Any]) -> bool:
+        if job.get("status") not in {"queued", "running", "waiting_for_approval"}:
+            return False
+        started_at = _parse_utc(job.get("started_at"))
+        if started_at is None:
+            return False
+        if datetime.now(UTC) - started_at < timedelta(minutes=30):
+            return False
+        self.store.update_job(
+            job["job_id"],
+            status="interrupted",
+            completed_at=utc_now(),
+            last_error="Interrupted stale job after SDK interrupt returned false.",
+        )
+        return True
+
     def _cancel_job(
         self,
         *,
@@ -423,6 +483,31 @@ def _stream_failure_message(event: Any) -> str | None:
         if event_type in {"turn/completed", "turn_completed"} and '"failed"' in raw_text:
             return summary or "SDK turn failed."
     return None
+
+
+def _stream_interrupted(event: Any) -> bool:
+    event_type = str(getattr(event, "event_type", "") or "")
+    summary = str(getattr(event, "summary", "") or "")
+    raw_payload = getattr(event, "raw_payload", None)
+    if event_type in {"turn/completed", "turn_completed"} and "interrupted" in summary.lower():
+        return True
+    if isinstance(raw_payload, dict):
+        raw_text = json.dumps(raw_payload, ensure_ascii=False).lower()
+        return event_type in {"turn/completed", "turn_completed"} and "interrupted" in raw_text
+    return False
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def format_sse_event(event: dict[str, Any]) -> str:
