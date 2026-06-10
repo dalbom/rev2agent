@@ -12,7 +12,7 @@ Before finalizing a manuscript, run a simulated peer review with a panel of AI a
 
 ## Review Panel Composition
 
-Launch **5 reviewer agents** (via Task tool, `subagent_type=general-purpose`) in parallel, plus the **main agent acts as Editor-in-Chief** to synthesize and implement changes.
+Launch **5 reviewer agents** (host-native subagents) in parallel, plus the **main agent acts as Editor-in-Chief** to synthesize and implement changes.
 
 | Reviewer | Persona | Primary Focus |
 |----------|---------|---------------|
@@ -26,14 +26,15 @@ Launch **5 reviewer agents** (via Task tool, `subagent_type=general-purpose`) in
 
 When Phase 8 re-runs (revision loop after a previous review cycle), each reviewer agent MUST start with fresh context:
 
-1. **Do NOT include** previous review files (`manuscript/reviews/reviewer_*.md`) in the reviewer's spawn prompt.
+1. **Do NOT include** previous review files (`manuscript/reviews/reviewer_*.md`) in the reviewer's spawn prompt — and instruct reviewers NOT to read `manuscript/reviews/` themselves.
 2. **Do NOT include** `review_synthesis.md` or `review_response.md` from prior rounds.
-3. Each reviewer receives ONLY:
+3. **Do NOT include** `summaries/phase8_review.md` — when reviewers read `summaries/` for context, this file is explicitly excluded, otherwise cycle-2 reviewers see cycle-1 verdicts.
+4. Each reviewer receives ONLY:
    - The current manuscript files (`main.tex` + `sections/`)
    - `references.bib`
    - The context files listed in "Common Instructions for All Reviewers" below
    - Their persona description and rubric
-4. The **Editor-in-Chief MAY reference** prior reviews during synthesis (to check whether previously raised issues were addressed), but individual reviewers must not see them.
+5. The **Editor-in-Chief MAY reference** prior reviews during synthesis (to check whether previously raised issues were addressed), but individual reviewers must not see them.
 
 This prevents anchoring bias where reviewers fixate on issues they previously raised rather than evaluating the manuscript on its current merits.
 
@@ -59,7 +60,7 @@ READ ALL of the following files carefully before writing your review:
 Also read these context files if relevant to your review focus:
 - {project_dir}/.research_state.json (experiment history)
 - {project_dir}/research_roadmap.md (research directions)
-- {project_dir}/summaries/ (round summaries for experiment details)
+- {project_dir}/summaries/ (round summaries for experiment details) — EXCLUDING summaries/phase8_review.md, and never read manuscript/reviews/ from prior cycles
 - {project_dir}/manuscript/data_provenance.md (number-to-source mapping, if it exists)
 - Any figure generation scripts under {project_dir}/manuscript/figures/*.py (check that their experimental config matches the project default)
 
@@ -265,7 +266,7 @@ After both passes:
 - `{project_dir}/manuscript/reviews/reviewer_E.md` — Individual review
 - `{project_dir}/manuscript/review_synthesis.md` — Editor synthesis + action plan
 - `{project_dir}/manuscript/review_response.md` — Author response to reviews
-- `{project_dir}/summaries/phase8_review.md` — Phase summary
+- `{project_dir}/summaries/phase8_review.md` — Phase summary (**REQUIRED** — listed in the summary checklist in `prompts/conventions.md`; it must exist before moving past Phase 8. Single file, updated across review cycles.)
 
 Write `phase8_review.md` after the Editor-in-Chief synthesis is complete and before presenting the synthesis to the user.
 
@@ -274,6 +275,7 @@ Write `phase8_review.md` after the Editor-in-Chief synthesis is complete and bef
 On entering Phase 8:
 - `current_phase`: `8`
 - `phase_status`: `"in_progress"`
+- `manuscript.status`: `"in_review"` (enum in `prompts/conventions.md`)
 - Append to `phase_history`
 
 When synthesis is ready:
@@ -287,5 +289,5 @@ After user approves and changes are implemented:
 
 **Routing after fixes:**
 - Text changes only → `current_phase`: `7`, `phase_status`: `"not_started"`. Stay in Phase 7/8 revision loop.
-- New experiments needed → `current_phase`: `6`, `sub_step`: `null`, `phase_status`: `"not_started"`. Phase 6 will enter round planning mode and increment `current_round`.
-- All issues resolved → `phase_status`: `"completed"`, `project_status`: `"completed"`, `manuscript.status`: `"final"`. Manuscript is ready for submission.
+- New experiments needed → `current_phase`: `6`, `sub_step`: `null`, `phase_status`: `"not_started"`. Phase 6 enters its **Phase 8 re-entry mode** (see `prompts/06_result_analysis.md`): it skips the analysis steps and goes straight to Round Planning, seeding candidate directions from `manuscript/review_synthesis.md`. `current_round` is incremented in Phase 6 when the new round is confirmed — do NOT increment it here.
+- All issues resolved → `phase_status`: `"completed"`, `project_status`: `"completed"`, `manuscript.status`: `"final"` (enum in `prompts/conventions.md`). Manuscript is ready for submission.

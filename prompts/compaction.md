@@ -19,6 +19,7 @@ Because all phase outputs are persisted to files (`.research_state.json`, `summa
 
 Almost always recommend at these boundaries:
 
+- **Phase 2 → 3** — a deep literature search accumulates substantial tool results (web searches, parallel agent outputs, credibility scoring); everything needed lives in `phase2_literature.md` and `literature/`.
 - **Phase 5 → 6** — experiment execution logs and subagent outputs are typically the largest.
 - **Phase 6 → 4 (next round)** — close out the previous round's context.
 - **Phase 6 → 7** — analysis details live in `phase6_results.md`.
@@ -26,7 +27,7 @@ Almost always recommend at these boundaries:
 
 ## Skip for Lightweight Transitions
 
-Skip at 1→2, 3→4, 4→5, 8→7: the conversation is short and starting a new session is not justified.
+Skip at 0→1, 1→2, 3→4, 4→5, 8→7: the conversation is short and starting a new session is not justified.
 
 ## How to Recommend
 

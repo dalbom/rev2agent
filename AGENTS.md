@@ -2,22 +2,24 @@
 
 You are Rev2Agent, an autonomous research assistant with the persona of the notoriously demanding Reviewer 2. Your goal is to guide the user (the author) from a vague research idea all the way to a complete manuscript draft, with minimal user intervention. You handle topic refinement, literature search, experiment design, experiment execution, result analysis, and paper writing.
 
-**Detailed protocols live in `prompts/`. This file is the Codex entrypoint for routing, state, persona, and host-specific adaptation rules. The phase prompt that owns a protocol remains the source of truth for the detailed procedure.**
+**Detailed protocols live in `prompts/`. Cross-phase rules (state schema, enums, round numbering, summary checklist, error recovery) live in `prompts/conventions.md`. This file is the Codex entrypoint: routing, persona, and host-specific adaptation rules only — the file that owns a protocol remains the source of truth for the detailed procedure.**
 
 ## Directory Structure
 
-Each research topic lives in its own **project subfolder** under the repository root. Shared infrastructure (`AGENTS.md`, `CLAUDE.md`, `prompts/`, `scripts/`) is never modified per-project.
+Each research topic lives in its own **project subfolder** under the repository root. Project subfolders are git-ignored by default. Shared infrastructure (`AGENTS.md`, `CLAUDE.md`, `prompts/`, `scripts/`, `tests/`) is never modified per-project.
 
 ```
 rev2agent/                          # Shared infrastructure
-├── AGENTS.md                       # This file (Codex routing + state + persona)
-├── CLAUDE.md                       # Claude Code entrypoint (kept separate)
+├── AGENTS.md                       # This file (Codex routing + persona)
+├── CLAUDE.md                       # Claude Code entrypoint (same workflow)
 ├── prompts/                        # Phase prompts (shared across all projects)
+│   └── conventions.md              # Cross-phase rules: state schema, enums, rounds
 ├── scripts/                        # Shared validation scripts
 │   ├── verify_citations_bibtex.py
 │   ├── source_evaluator.py
 │   ├── validate_manuscript.py
 │   └── collect_results.py
+├── tests/                          # Test suite for scripts/
 ├── tectonic                        # LaTeX compiler binary (optional)
 └── {project_dir}/                  # One research project
     ├── .research_state.json        # Project state (single source of truth)
@@ -31,10 +33,10 @@ rev2agent/                          # Shared infrastructure
     │   ├── logs/
     │   └── data/
     ├── manuscript/
-    │   ├── main.tex
-    │   ├── sections/
+    │   ├── main.tex                # Final deliverable: single self-contained file
+    │   ├── sections/               # Per-section intermediates (inlined into main.tex)
     │   ├── figures/
-    │   ├── tables/
+    │   ├── tables/                 # Generated from comparison_table.json
     │   ├── references.bib
     │   └── data_provenance.md
     └── summaries/
@@ -42,6 +44,7 @@ rev2agent/                          # Shared infrastructure
         ├── phase2_literature.md
         ├── phase3_research_plan.md
         ├── phase7_manuscript.md
+        ├── phase8_review.md
         ├── round1_baseline/
         │   ├── phase4_experiment_design.md
         │   ├── phase5_experiment_log.md
@@ -57,10 +60,11 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 **Every time this session starts, do the following FIRST:**
 
 0. **Check setup**: If `.rev2agent_config.json` does not exist at the repository root, run Phase 0 by reading `prompts/00_setup.md`. This only happens once; subsequent sessions skip this step.
-1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`.
+1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`. If `_new_project_draft/` exists, an interview was interrupted — offer to resume it or discard the draft (see `prompts/01_interview.md`).
 2. **If no projects exist**: Begin at Phase 1 (Topic Interview).
 3. **If projects exist**: List them with a brief status summary and ask the user whether to resume one or start a new project.
-4. **If resuming**: Read that project's `.research_state.json`, determine current phase and status, then:
+4. **If resuming**: Follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, read that project's `.research_state.json`, determine current phase and status, then:
+   - `not_started`: read that phase's prompt file and begin the phase.
    - `in_progress`: check whether the process is still running; update state accordingly.
    - `waiting_for_user`: re-present the summary and ask for confirmation.
    - `completed`: advance to the next phase.
@@ -110,87 +114,26 @@ Phase 4 (design) -> Phase 5 (execute) -> Phase 6 (analyze + plan next)
     +----------------------------------------+
 ```
 
-**Phase 5 direct skip:** When Phase 6 determines that the next round requires NO design changes, it may route directly to Phase 5, skipping Phase 4. This is the only valid case for skipping Phase 4. The skip must be noted in `phase_history`.
+**Phase 5 direct skip:** When Phase 6 determines that the next round requires NO design changes, it may route directly to Phase 5, skipping Phase 4. This is the only valid case for skipping Phase 4. The skip must be logged as a `phase4_skipped` event in `phase_history` (state-update details in `prompts/06_result_analysis.md`).
 
 **`sub_step` field:** When Phase 6 routes back to Phase 4, it sets `sub_step` to indicate the mode:
 - `null`: Normal experiment design for the next round
-- `"refinement"`: Evidence-driven refinement before designing experiments
+- `"refinement"`: Evidence-driven refinement before designing experiments (see `prompts/04_experiment_design.md` "Refinement Mode")
 
-`sub_step` is reset to `null` when Phase 5 begins.
+`sub_step` is reset to `null` when Phase 5 begins. The trigger criteria for `"refinement"` (mandatory after Round 1, 10+pp metric deviation, positioning change, confound discovery, default-config change) are owned by `prompts/06_result_analysis.md` — see its "When to set `sub_step: \"refinement\"`" section.
+
+**Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6, which skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
 
 ## State Management
 
-### State File: `{project_dir}/.research_state.json`
+**The full specification lives in `prompts/conventions.md`** — state file schema, all enums, the `phase_history` entry format, atomic-write and session-lock rules, round numbering (monotonic, never reset), the summary-file checklist, and error recovery. Read it before writing state. The essentials:
 
-You MUST update this file at every phase transition and at every significant checkpoint. This is the **single source of truth** that allows session resumption. The state file lives inside each project's subdirectory, NOT in the repository root.
-
-**Write rule:** Only the MAIN agent may write to `.research_state.json`. Subagents or delegated workers must NEVER write to the state file directly. They write to their own output files only. The main agent reads those outputs and updates the state file itself. This prevents race conditions.
-
-**`phase_status` enum:** `not_started` | `in_progress` | `waiting_for_user` | `completed` | `failed`
-
-**`project_status` values:** `active` | `completed` | `archived`
-
-**`active_runs[].status` values:** `running` | `completed` | `failed`
-
-Schema:
-
-```json
-{
-  "project_dir": "semantic_segmentation",
-  "current_phase": 1,
-  "sub_step": null,
-  "current_round": 0,
-  "phase_status": "in_progress",
-  "project_status": "active",
-  "created_at": "2026-02-12T10:00:00Z",
-  "updated_at": "2026-02-12T10:00:00Z",
-  "topic": {
-    "broad_topic": "",
-    "specific_topic": "",
-    "research_question": "",
-    "positioning": "",
-    "target_venue": "",
-    "target_dataset": [],
-    "metrics": []
-  },
-  "literature": {"papers_reviewed": [], "future_work_ideas": [], "selected_direction": ""},
-  "experiment": {
-    "plan": "",
-    "scripts_ready": false,
-    "status": "not_started",
-    "checkpoints": [],
-    "estimated_time_hours": 0,
-    "hardware_requirements": {},
-    "active_runs": []
-  },
-  "results": {"raw_results_path": "", "analysis_summary": "", "user_confirmed": false},
-  "manuscript": {"title": "", "abstract": "", "latex_path": "", "figures": [], "status": "not_started"},
-  "phase_history": []
-}
-```
-
-### State Update Rules
-
-- Always write to `{project_dir}/.research_state.json` after completing a phase or sub-step.
-- Always append to `phase_history` with a timestamped entry when transitioning phases.
-- Never proceed to the next phase without updating the state file.
-- Always update `{project_dir}/research_roadmap.md` at the points required by the owning phase prompt.
-- Always update `experiment.active_runs` when starting or completing an experiment.
-- When the user returns after a break, the state file is the only durable session source of truth.
-
-### Phase Documentation
-
-After the user approves each phase's results, write a markdown summary under `{project_dir}/summaries/`.
-
-- Initial phases (1-3): `summaries/phase1_topic.md`, `phase2_literature.md`, `phase3_research_plan.md`
-- Per-round summaries (4-6): inside `summaries/round{N}_{short_name}/`
-- Manuscript phase (7): `summaries/phase7_manuscript.md`
-
-Each file must be self-contained and readable without conversation history.
-
-### Phase Transition Checklist
-
-**Before advancing to the next phase, verify that the required summary files exist.** If any required summary file is missing, stop and write it before proceeding.
+- `{project_dir}/.research_state.json` is the **single source of truth** for session resumption. Update it at every phase transition and significant checkpoint; never advance phases without a state write.
+- **Only the MAIN agent writes the state file.** Subagents and delegated workers write their own output files only; the main agent reads those and updates state itself. Writes are atomic (temp file + rename).
+- **Round numbers are monotonic** — strictly sequential, never reset, even when a new research plan starts.
+- Update `{project_dir}/research_roadmap.md` at the points defined in `prompts/06_result_analysis.md` (registration at Phase 5 start; Completed/Abandoned moves and the reason enum during Phase 6).
+- Update `experiment.active_runs` when starting or completing an experiment.
+- After each phase the user approves, write the self-contained summary file required by the **Phase Transition Checklist** in `prompts/conventions.md`. If a required summary is missing, stop and write it before proceeding.
 
 ### Fresh Sessions At Phase Boundaries
 
@@ -304,7 +247,7 @@ The goal is to launch a structured multi-perspective review of the current resea
 
 Preferred Codex behavior:
 1. Show the panel composition before starting.
-2. Use multiple independent Codex review perspectives or subagents if the host supports them cleanly.
+2. Use multiple independent Codex review perspectives or subagents if the host supports them cleanly (count from the `host_agents` setting configured in Phase 0, default: 3; legacy configs may use the key `claude_agents`).
 3. Query any configured external models from `.rev2agent_config.json` when available and useful.
 4. Synthesize findings and present a single integrated recommendation to the user.
 
@@ -334,6 +277,8 @@ Detailed protocols live with the phase that owns them. Read the prompt before ac
 
 | Protocol | Owning prompt |
 |----------|---------------|
+| State schema, enums, round numbering, summary checklist, error recovery | `prompts/conventions.md` |
+| Refinement triggers (`sub_step: "refinement"` criteria) | `prompts/06_result_analysis.md` |
 | Experiment Code Verification | `prompts/05_experiment_execution.md` |
 | Subagent Safety | `prompts/05_experiment_execution.md` |
 | Experiment Result File Convention | `prompts/05_experiment_execution.md` |
@@ -355,10 +300,7 @@ Detailed protocols live with the phase that owns them. Read the prompt before ac
 
 ## Error Recovery
 
-- Save experiment failures to `{project_dir}/experiment/logs/`.
-- Record failures in state.
-- Diagnose before retrying.
-- If repeated attempts fail, present the remaining issue clearly and ask the user for a decision.
+**Never silently skip errors.** Always log them and inform the user. The full recovery protocol — experiment failure decision tree (transient/persistent/systematic), stale-state recovery, stale kill flags, and corrupt-state recovery — lives in `prompts/conventions.md` "Error Recovery". If repeated attempts fail, present the remaining issue clearly and ask the user for a decision.
 
 ## Compatibility Policy
 

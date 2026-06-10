@@ -52,11 +52,13 @@ If you don't have any, just type "skip".
 | Key Prefix | Provider | API Base |
 |---|---|---|
 | `sk-or-` | OpenRouter | `https://openrouter.ai/api/v1/chat/completions` |
-| `sk-` (not `sk-or-`) | OpenAI | `https://api.openai.com/v1/chat/completions` |
+| `sk-ant-` | Anthropic | `https://api.anthropic.com` |
+| `sk-` (not `sk-or-`, not `sk-ant-`) | Ambiguous — **ask the user to confirm the provider** | Per confirmed provider (e.g., OpenAI: `https://api.openai.com/v1/chat/completions`) |
 | `AIzaSy` | Google AI Studio | `https://generativelanguage.googleapis.com/v1beta` |
 | `xai-` | xAI (Grok) | `https://api.x.ai/v1/chat/completions` |
-| `sk-ant-` | Anthropic | Host-dependent |
 | Unknown | Ask the user which provider | — |
+
+**Ambiguous `sk-` keys:** Several providers (OpenAI, DeepSeek, and others) issue keys starting with plain `sk-`. Never assume OpenAI — ask one short question ("This looks like an OpenAI-style key — is it OpenAI, DeepSeek, or another provider?") and use the confirmed provider's API base.
 
 The flagship model for each provider is selected automatically in Step 0.3 (not hardcoded here).
 
@@ -72,10 +74,12 @@ The flagship model for each provider is selected automatically in Step 0.3 (not 
 Parse whatever format they use. Extract keys, auto-detect providers, confirm with user.
 
 **After detecting each key:**
-1. Test connectivity with a minimal API call.
-2. If test succeeds: `✅ [Provider] connected — [model] available`
-3. If test fails: `❌ [Provider] key didn't work. Check the key and try again, or skip.`
+1. Test connectivity by calling the provider's **model-listing endpoint** (e.g., OpenAI-compatible `GET /models`, OpenRouter `GET /api/v1/models`, Google AI Studio `GET /v1beta/models`). No model needs to be selected yet — this validates the key and returns the model list that Step 0.3 uses for selection.
+2. If the listing call succeeds: `✅ [Provider] connected — [N] models listed`
+3. If it fails: `❌ [Provider] key didn't work. Check the key and try again, or skip.`
 4. Store the key in `.rev2agent_config.json` (the config file is gitignored).
+
+After Step 0.3 has selected each provider's flagship model, optionally confirm it with a single 1-token chat call and report: `✅ [Provider] — [model] available`.
 
 **If the user says "skip":** Note that all discussions will use host-native review agents only. This is perfectly fine — move on.
 
@@ -102,7 +106,8 @@ Apply this filter pipeline to all available models, regardless of provider:
 ```
 Step 1: List all models
   - If the provider supports a model listing API (e.g., OpenRouter GET /api/v1/models),
-    fetch the full list with pricing.
+    fetch the full list with pricing. Reuse the list already fetched during the
+    Step 0.2 connectivity test where possible.
   - If not (e.g., Google AI Studio), check the provider's documentation or test
     known model names.
 
@@ -133,7 +138,7 @@ Step 5: Sanity check
 
 - **Verification** (experiment code review): Pick one external flagship model from a provider other than the current host provider when possible. Independent review from a different provider is more valuable than same-provider review. If multiple such flagships exist, pick any one.
 - **Discussion** ("major revision" panel): Include ALL selected flagship models across providers for maximum diversity, plus host-native review agents. One model per provider, no duplicates.
-- **Host-native review agents** are always included in discussion (default 3). They are not selected through this pipeline — they come from the current host agent environment.
+- **Host-native review agents** are always included in discussion (count asked in Step 0.4, default 3). They are not selected through this pipeline — they come from the current host agent environment.
 
 #### Examples
 
@@ -160,7 +165,18 @@ discussion:   3x host-native review agents only
 
 Display the selected models and role assignments in the environment summary. If the user disagrees, they can override. Do not proactively ask.
 
-### 0.4 LaTeX Check (silent)
+### 0.4 Discussion Panel Size (one question, default 3)
+
+Ask exactly one question:
+
+```
+How many host-native review agents should join the "major revision" 
+discussion panel? [default: 3]
+```
+
+If the user presses enter, says "default", or gives no usable number, use 3. Store the answer as `major_revisions_panel.host_agents` in the config file. Do not ask any follow-up about this setting.
+
+### 0.5 LaTeX Check (silent)
 
 Run automatically without asking:
 
@@ -170,7 +186,7 @@ which tectonic 2>/dev/null || ([ -f ./tectonic ] && echo "found") || echo "not f
 
 Only mention the result in the summary. Don't ask a question about it.
 
-### 0.5 Environment Summary
+### 0.6 Environment Summary
 
 ```
 Rev2Agent — Ready
@@ -205,7 +221,7 @@ LaTeX: ✅ tectonic found  /  ⚠️ Not installed yet
 Configuration saved.
 ```
 
-### 0.6 Quick Guide
+### 0.7 Quick Guide
 
 ```
 How Rev2Agent works
@@ -251,6 +267,12 @@ Save to `.rev2agent_config.json` at the repository root. **This file must be add
       "api_base": "https://generativelanguage.googleapis.com/v1beta",
       "api_key": "AIzaSy...",
       "flagship_model": "gemini-3.1-pro-preview"
+    },
+    {
+      "name": "anthropic",
+      "api_base": "https://api.anthropic.com",
+      "api_key": "sk-ant-...",
+      "flagship_model": "claude-opus-4-5"
     }
   ],
   "roles": {
@@ -258,7 +280,7 @@ Save to `.rev2agent_config.json` at the repository root. **This file must be add
     "discussion": ["openai/gpt-5.4", "gemini-3.1-pro-preview"]
   },
   "major_revisions_panel": {
-    "claude_agents": 3,
+    "host_agents": 3,
     "external_models": ["openai/gpt-5.4", "gemini-3.1-pro-preview"]
   },
   "latex": {
@@ -268,6 +290,8 @@ Save to `.rev2agent_config.json` at the repository root. **This file must be add
 ```
 
 The `providers` array can be empty (host-only mode). Keys are stored directly in this file since it is gitignored — no need for environment variables.
+
+Legacy key `claude_agents` is read as `host_agents` if present.
 
 ## State Update
 

@@ -19,17 +19,47 @@ Requires only Python 3.10+ stdlib (no external dependencies).
 
 import sys
 import argparse
+import fnmatch
 import json
 import math
 import re
+import statistics
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+# Top-level keys that identify this script's own output (comparison table).
+# Such files must never be re-ingested as experiment results.
+_OUTPUT_SIGNATURE_KEYS = {"results_dir", "files_scanned", "entries"}
+
+
+def is_own_output(data: Any) -> bool:
+    """Return True if parsed JSON looks like this script's own output."""
+    return (
+        isinstance(data, dict)
+        and "_meta" not in data
+        and _OUTPUT_SIGNATURE_KEYS <= set(data.keys())
+    )
+
+
 def find_result_files(results_dir: Path) -> List[Path]:
-    """Find all non-empty JSON files under results_dir."""
+    """
+    Find all non-empty JSON files under results_dir.
+
+    Skips this script's own output (comparison_table*.json) so re-runs do
+    not re-ingest the generated table, and tolerates broken symlinks.
+    """
     json_files = sorted(results_dir.rglob("*.json"))
-    return [f for f in json_files if f.stat().st_size > 0]
+    found = []
+    for f in json_files:
+        if fnmatch.fnmatch(f.name, "comparison_table*.json"):
+            continue
+        try:
+            if f.stat().st_size > 0:
+                found.append(f)
+        except OSError:
+            continue  # broken symlink or vanished file
+    return found
 
 
 def extract_metrics_flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, float]:
@@ -94,25 +124,108 @@ def extract_method_rows(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
-def extract_meta(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract _meta field if present, otherwise infer from top-level fields."""
+def extract_meta(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Extract the _meta field. Returns (meta, warnings).
+
+    The Phase 5 result file convention makes _meta mandatory: a missing
+    _meta is inferred from top-level fields but reported as a warning,
+    and a malformed (non-dict) _meta degrades to a warning instead of
+    crashing the whole run.
+    """
+    warnings: List[str] = []
     if "_meta" in data:
-        return data["_meta"]
+        meta = data["_meta"]
+        if isinstance(meta, dict):
+            return meta, warnings
+        warnings.append(
+            f"_meta is not a dict (got {type(meta).__name__}); ignoring it"
+        )
+        return {}, warnings
+
+    warnings.append("missing _meta (mandatory per Phase 5 convention); "
+                    "inferring from top-level fields")
     meta = {}
     if "timestamp" in data:
         meta["timestamp"] = data["timestamp"]
     if "round" in data:
         meta["round"] = data["round"]
-    return meta
+    return meta, warnings
+
+
+_ROUND_RE = re.compile(r"(?:^|[_\-/])round(\d+)")
+_SEED_RE = re.compile(r"(?:^|[_\-/])seed[_\-]?(\d+)", re.IGNORECASE)
 
 
 def infer_round_from_path(path: Path) -> Optional[int]:
-    """Try to infer round number from file path (e.g., round5_combined.json -> 5)."""
+    """Try to infer round number from file path (e.g., round5_combined.json -> 5).
+
+    The 'round' token must start a path component or follow a separator,
+    so e.g. 'playground2' is not misread as round 2.
+    """
     for part in [path.stem] + [p for p in path.parts]:
-        m = re.search(r"round(\d+)", part)
+        m = _ROUND_RE.search(part)
         if m:
             return int(m.group(1))
     return None
+
+
+def infer_seed(meta: Dict[str, Any], path_str: str) -> Optional[int]:
+    """Infer the random seed from _meta or from the file name."""
+    seed = meta.get("seed")
+    if isinstance(seed, int) and not isinstance(seed, bool):
+        return seed
+    m = _SEED_RE.search(Path(path_str).stem)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def aggregate_seeds(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Group seeded entries by (round, method, group) and compute mean/std
+    per metric across seeds. Only groups with >= 2 distinct seeds are
+    aggregated (a single seed has no spread to report).
+    """
+    groups: Dict[Tuple, List[Dict[str, Any]]] = {}
+    for entry in entries:
+        if entry.get("seed") is None:
+            continue
+        key = (entry["round"], entry.get("method"), entry.get("group"))
+        groups.setdefault(key, []).append(entry)
+
+    aggregates: List[Dict[str, Any]] = []
+    for (rnd, method, group), items in sorted(
+        groups.items(),
+        key=lambda x: (x[0][0] is None, x[0][0] or 0, str(x[0][1]), str(x[0][2])),
+    ):
+        seeds = sorted({e["seed"] for e in items})
+        if len(seeds) < 2:
+            continue
+
+        metric_vals: Dict[str, List[float]] = {}
+        for e in items:
+            for k, v in e["metrics"].items():
+                metric_vals.setdefault(k, []).append(v)
+
+        metrics: Dict[str, Dict[str, Any]] = {}
+        for k, vals in sorted(metric_vals.items()):
+            metrics[k] = {
+                "mean": sum(vals) / len(vals),
+                "std": statistics.stdev(vals) if len(vals) > 1 else 0.0,
+                "n": len(vals),
+            }
+
+        aggregates.append({
+            "round": rnd,
+            "method": method,
+            "group": group,
+            "n_seeds": len(seeds),
+            "seeds": seeds,
+            "files": sorted({e["file"] for e in items}),
+            "metrics": metrics,
+        })
+    return aggregates
 
 
 def collect_results(
@@ -126,14 +239,20 @@ def collect_results(
         {
             "results_dir": str,
             "files_scanned": int,
-            "files_with_metrics": int,
+            "files_with_metrics": int,   # distinct files that yielded entries
+            "entries_extracted": int,    # total entry rows extracted
             "entries": [
                 {
                     "file": str (relative path),
                     "round": int or null,
+                    "seed": int or null,
                     "meta": dict,
                     "metrics": {key: value},
                 }
+            ],
+            "aggregates": [  # mean/std across seeds per (round, method, group)
+                {"round", "method", "group", "n_seeds", "seeds", "files",
+                 "metrics": {key: {"mean", "std", "n"}}}
             ],
             "warnings": [str]
         }
@@ -162,9 +281,21 @@ def collect_results(
         if not isinstance(data, dict):
             continue
 
-        meta = extract_meta(data)
-        rnd = meta.get("round") or infer_round_from_path(fpath)
         rel_path = str(fpath.relative_to(results_dir))
+
+        # Never re-ingest this script's own output, even if renamed
+        if is_own_output(data):
+            warnings.append(
+                f"Skipped {rel_path}: looks like collect_results.py output, "
+                f"not an experiment result"
+            )
+            continue
+
+        meta, meta_warnings = extract_meta(data)
+        for mw in meta_warnings:
+            warnings.append(f"{rel_path}: {mw}")
+        rnd = meta.get("round") or infer_round_from_path(fpath)
+        seed = infer_seed(meta, rel_path)
 
         # Mode 1: Extract per-method rows from arrays
         method_rows = extract_method_rows(data)
@@ -175,6 +306,7 @@ def collect_results(
                     entries.append({
                         "file": rel_path,
                         "round": rnd,
+                        "seed": seed,
                         "method": row["method"],
                         "group": row["group"],
                         "meta": meta,
@@ -188,6 +320,7 @@ def collect_results(
             entries.append({
                 "file": rel_path,
                 "round": rnd,
+                "seed": seed,
                 "method": None,
                 "group": None,
                 "meta": meta,
@@ -197,8 +330,10 @@ def collect_results(
     return {
         "results_dir": str(results_dir),
         "files_scanned": len(json_files),
-        "files_with_metrics": len(entries),
+        "files_with_metrics": len({e["file"] for e in entries}),
+        "entries_extracted": len(entries),
         "entries": entries,
+        "aggregates": aggregate_seeds(entries),
         "warnings": warnings,
     }
 
@@ -228,7 +363,8 @@ def format_markdown(collected: Dict[str, Any]) -> str:
     lines.append("")
     lines.append(f"Source: `{collected['results_dir']}`")
     lines.append(f"Files scanned: {collected['files_scanned']}, "
-                 f"with metrics: {collected['files_with_metrics']}")
+                 f"with metrics: {collected['files_with_metrics']}, "
+                 f"entries extracted: {collected['entries_extracted']}")
     lines.append("")
 
     if collected["warnings"]:
@@ -326,6 +462,32 @@ def format_markdown(collected: Dict[str, Any]) -> str:
 
                 lines.append("")
 
+    # Seed aggregates (mean +/- std across seeds)
+    aggregates = collected.get("aggregates", [])
+    if aggregates:
+        lines.append("## Seed Aggregates (mean ± std across seeds)")
+        lines.append("")
+        for agg in aggregates:
+            rnd_label = f"Round {agg['round']}" if agg["round"] is not None else "Unassigned"
+            method_label = agg["method"] or "(file-level)"
+            mk_sorted = sorted(agg["metrics"].keys())
+            short_keys = [_short_key(k) for k in mk_sorted]
+
+            lines.append(f"**{rnd_label} — {method_label}** "
+                         f"(n_seeds={agg['n_seeds']}, seeds={agg['seeds']})")
+            lines.append("")
+            lines.append("| Metric | mean | std | n |")
+            lines.append("|--------|------|-----|---|")
+            for k, sk in zip(mk_sorted, short_keys):
+                stats = agg["metrics"][k]
+                lines.append(
+                    f"| {sk} | {stats['mean']:.4f} | {stats['std']:.4f} "
+                    f"| {stats['n']} |"
+                )
+            lines.append("")
+            lines.append(f"Sources: {', '.join(agg['files'])}")
+            lines.append("")
+
     return "\n".join(lines)
 
 
@@ -369,6 +531,12 @@ Output:
         default=None,
         help="Comma-separated metric keys to include (partial match supported)",
     )
+    parser.add_argument(
+        "--fail-on-warnings",
+        action="store_true",
+        help="Exit with a nonzero status if any warnings were produced "
+             "(makes the Phase 6 gate enforceable)",
+    )
 
     args = parser.parse_args()
 
@@ -399,6 +567,11 @@ Output:
             encoding="utf-8",
         )
         print(f"JSON saved to: {args.output_json}", file=sys.stderr)
+
+    if args.fail_on_warnings and collected["warnings"]:
+        print(f"\nERROR: {len(collected['warnings'])} warning(s) with "
+              f"--fail-on-warnings set", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

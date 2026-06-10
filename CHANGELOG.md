@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-06-09]
+
+### Added
+- `prompts/conventions.md` — single host-neutral home for the shared state schema, status enums, `phase_history` entry format, state write rules (atomic writes, session lock, corrupt-state recovery), round numbering rules, summary-file checklist, and error recovery; both entrypoints and all phase prompts reference it
+- Test suite under `tests/` and GitHub Actions CI workflow (`.github/workflows/ci.yml`), with `pyproject.toml` for tooling configuration
+
+### Changed
+- Host-neutral migration completed: shared prompts no longer reference entrypoint files by name
+- Round numbering is now strictly monotonic — round numbers never reset, including when Phase 6 routes back to Phase 3 for a new research plan (the plan boundary is logged as a `new_research_plan` event in `phase_history`)
+- Phase 7 now produces a single self-contained `main.tex` (no `sections/` includes), adds a dedicated abstract-writing task, and generates LaTeX tables from collected results
+- `.gitignore` now excludes user research-project directories by default (allowlist of framework dirs: `prompts/`, `scripts/`, `tests/`, `.github/`) and the `tectonic` binary at the repo root
+
+### Fixed
+- Phase 6 state-machine gaps: explicit Phase 5 direct-skip branch (identical-config rounds) and Phase 8 re-entry mode after review-driven revisions
+- Script bug fixes across the shared tooling: `\cite` regex in citation extraction, BibTeX brace parsing, `collect_results.py` no longer self-ingests its own `comparison_table.json`, timezone-handling crash, `\graphicspath`/`\cref` parsing in manuscript validation, and network retries for verification API calls
+
 ## [2026-04-21]
 
 ### Added
@@ -23,6 +39,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `prompts/compaction.md` now describes fresh-session guidance generically instead of using Claude-specific `/compact` wording
 - `prompts/05_experiment_execution.md` resume instructions now refer to starting a new session in the repository instead of running `claude`
 - README, Korean README, and INSTALL docs now describe both Claude Code and Codex, with separate entrypoints and host-neutral review-panel wording
+
+## [2026-04-20]
+
+### Added
+- `INSTALL.md` — bilingual setup guide (English default, Korean in a collapsible section); README and Korean README now link to it instead of duplicating setup steps (#4)
+
+### Changed
+- Quick Start replaced terminal-centric instructions with a single agent prompt that works on any OS (#4)
+- Session handling at phase boundaries: replaced the `/compact` recommendation with starting a new session — all phase outputs are persisted to disk, so a fresh session reconstructs context from state files without summary token cost (`CLAUDE.md`, `prompts/compaction.md`) (#5)
 
 ## [2026-04-19]
 

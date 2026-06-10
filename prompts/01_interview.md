@@ -8,15 +8,20 @@ Direct conversation with the user. No agents or subagents needed.
 
 ## Interview Flow
 
-**Early state creation:** Before starting the interview, create a minimal project directory and state file so that progress is recoverable if the session crashes mid-interview:
+**Early state creation:** Before starting the interview, create a temporary project directory and state file so that progress is recoverable if the session crashes mid-interview:
 
 1. Create a temporary directory name: `_new_project_draft`
-2. Create `_new_project_draft/.research_state.json` with:
-   ```json
-   {"project_dir": "_new_project_draft", "current_phase": 1, "sub_step": null, "current_round": 0, "phase_status": "in_progress", "created_at": "<timestamp>", "updated_at": "<timestamp>"}
-   ```
-3. After the interview completes and the user confirms the topic, rename this directory to the final project name and update the state file.
-4. On session resume, if `_new_project_draft/` exists, the Startup Protocol detects it and resumes the interview.
+2. Create `_new_project_draft/.research_state.json` using the **FULL schema** from `prompts/conventions.md` — every top-level key present with its default/empty value, so any code reading the draft state never hits missing keys. Set:
+   - `project_dir`: `"_new_project_draft"`
+   - `current_phase`: `1`
+   - `sub_step`: `null`
+   - `current_round`: `0`
+   - `phase_status`: `"in_progress"`
+   - `project_status`: `"active"`
+   - `created_at` / `updated_at`: current ISO 8601 UTC timestamp
+3. **Interview completion:** after the user confirms the topic, the draft directory is **renamed** to the real `project_dir` (see Project Directory Creation below) and the state file's `project_dir` field is updated to match.
+4. **Abandon / start over:** if the user abandons the interview or asks to start over, **DELETE the `_new_project_draft/` directory** before doing anything else. Never leave a stale draft behind.
+5. **Session resume:** on session start, if `_new_project_draft/` exists, offer the user a choice: **resume the interview** from the draft, or **discard the draft** (delete the directory and start fresh).
 
 Conduct the interview **one question at a time**. Do not dump all questions at once. Wait for each answer before asking the next. Adapt follow-up questions based on responses.
 
@@ -58,7 +63,7 @@ Conduct the interview **one question at a time**. Do not dump all questions at o
 
 - If the user gives very specific answers → fewer questions needed, move quickly.
 - If the user is exploratory → ask more probing questions, suggest example directions.
-- If the user seems uncertain → If the `research-deep-dive` skill is available, use it to discover trending topics, open problems, and promising directions. Otherwise, use WebSearch to research the area manually. Use the research findings to propose 2-3 concrete, evidence-backed directions and let them pick.
+- If the user seems uncertain → If the `research-deep-dive` skill is available, use it to discover trending topics, open problems, and promising directions. Otherwise, use web search to research the area manually. Use the research findings to propose 2-3 concrete, evidence-backed directions and let them pick.
 
 ## Output
 
@@ -91,11 +96,11 @@ After the user confirms the topic summary, **create the project directory**:
    Is this name okay, or would you prefer something different?
    ```
 3. **Validate the directory name**: The name must match `^[a-z0-9_]+$` (lowercase letters, digits, underscores only) and be at most 50 characters. Reject names containing spaces, hyphens, dots, slashes, or any special characters. If the user proposes an invalid name, sanitize it automatically and confirm.
-4. **Create the directory structure**:
+4. **Rename the draft and create the directory structure**: rename `_new_project_draft/` to `{project_dir}/`, then:
    ```
    mkdir -p {project_dir}/{literature,experiment/{configs,scripts,checkpoints,results,logs,data},manuscript/{figures,tables},summaries}
    ```
-5. Set `project_dir` in the state and use it for all subsequent operations.
+5. Set `project_dir` in the state file and use it for all subsequent operations.
 
 ## Phase Summary
 
@@ -107,13 +112,14 @@ This file must exist before proceeding to Phase 2.
 
 ## State Update
 
-After user confirms and project directory is created:
+Field names and enum values follow `prompts/conventions.md`. After user confirms and project directory is created:
+- `project_dir`: the final directory name (draft renamed)
 - `current_phase`: `2`
 - `sub_step`: `null`
 - `current_round`: `0`
 - `phase_status`: `"not_started"`
 - `project_status`: `"active"`
 - Populate `topic.broad_topic`, `topic.target_dataset`, etc.
-- Append to `phase_history`
+- Append to `phase_history` (entry format in `prompts/conventions.md`)
 
 Then proceed to Phase 2 by reading `prompts/02_literature_search.md`.

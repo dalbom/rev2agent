@@ -17,8 +17,9 @@ Target format: standard ML conference paper (typically 8 pages + references).
 
 ```
 {project_dir}/manuscript/
-├── main.tex            # Master file with \input{} for each section
-├── sections/
+├── main.tex            # FINAL DELIVERABLE: self-contained, all section and
+│                       # table content inlined — no \input{} in the final file
+├── sections/           # Intermediate artifacts written by subagents (kept)
 │   ├── abstract.tex
 │   ├── introduction.tex
 │   ├── related_work.tex
@@ -32,10 +33,12 @@ Target format: standard ML conference paper (typically 8 pages + references).
 │   ├── fig_ablation.pdf
 │   ├── fig_qualitative.pdf
 │   └── fig_method_overview.pdf   # placeholder — user may need to create
-├── tables/
+├── tables/             # LaTeX table fragments generated from comparison_table.json
 ├── references.bib
 └── style/                        # Conference style files (e.g., cvpr.sty)
 ```
+
+Subagents each write their own `sections/*.tex` file. These are kept as intermediate artifacts, but the integration step (Step 5) produces ONE self-contained `main.tex` with all section and table content inlined. Figures remain external graphics files referenced via `\includegraphics`.
 
 ## Step 1: Setup
 
@@ -71,8 +74,9 @@ ANTI-HALLUCINATION RULES (MANDATORY):
 
 Before spawning section writers, prepare:
 1. A finalized `references.bib` with all pre-verified entries
-2. A results summary file with all key numbers (copy from Phase 6 outputs)
+2. The results summary file `{project_dir}/manuscript/results_summary.md`, generated from `{project_dir}/experiment/results/comparison_table.json` (Phase 6 output). This file is given to EVERY section-writing task — it is the only place section writers may copy numbers from.
 3. A list of available figures with their exact filenames and captions
+4. **LaTeX table fragments**: convert `{project_dir}/experiment/results/comparison_table.json` into LaTeX table fragments under `{project_dir}/manuscript/tables/*.tex` (e.g., `main_results.tex`, `ablation.tex`) via a small conversion script. The script must pass the **Code Verification Protocol** (`prompts/05_experiment_execution.md`) before running. **Never hand-type metric values into LaTeX** — every table value flows from `comparison_table.json` through this script.
 
 ## Step 3: Parallel Section Writing (via Task Subagents)
 
@@ -166,12 +170,16 @@ results.tex structure (~1.5 pages):
 3. Qualitative results: Reference qualitative figure if available.
 4. Statistical significance: Report p-values for key comparisons.
 
-Include the actual tables and figures generated in Phase 6.
-Use \input{tables/main_results.tex} for tables.
+Tables: reference the pre-generated fragments under {project_dir}/manuscript/tables/
+(e.g., \input{tables/main_results.tex}) — these were generated from
+comparison_table.json in the Pre-Writing Checklist. NEVER hand-type metric values
+into table bodies or inline text; copy inline numbers from results_summary.md only.
+(The integration step will inline these fragments into the final main.tex.)
 Use \includegraphics for figures.
 
 Available context:
-- All data from {project_dir}/experiment/results/
+- results_summary.md (sole source for inline numbers)
+- Table fragments in {project_dir}/manuscript/tables/
 - Figures from {project_dir}/manuscript/figures/
 - Statistical test results
 ```
@@ -238,37 +246,40 @@ Do NOT overclaim. Do NOT introduce new information not supported by experiments.
 Do NOT restate numbers already in the abstract — the conclusion should feel like a closing argument, not a summary table.
 ```
 
+### Task F: Abstract
+```
+Write sections/abstract.tex
+
+The abstract is written concurrently with the other sections, by its own subagent,
+under the same ANTI-HALLUCINATION RULES (included in this prompt like every other
+section task): every number must be copied from the provided results_summary.md
+(traced to result files) — never from memory — and FACT vs SYNTHESIS must be kept
+distinct (no interpretive claim stated as a measured result).
+
+Structure: ONE paragraph (~150-250 words), in this order:
+1. Problem — what gap or question the paper addresses (1-2 sentences).
+2. Approach — what we do, at a level a non-specialist in the subarea can follow
+   (1-2 sentences).
+3. Key quantitative result — the single most important number(s), copied exactly
+   from results_summary.md, with the comparison point (e.g., "improves mIoU from
+   72.3 to 76.2 over the strongest baseline").
+4. Implication — why the result matters (1 sentence).
+
+Do NOT cite references in the abstract. Do NOT overclaim beyond what the stated
+numbers support.
+
+Available context:
+- Research question and positioning: {from state}
+- results_summary.md (sole source for all numbers)
+```
+
 ## Step 4: Quality Gates (MANDATORY)
 
-After all subagents return their sections but before integration, run these three quality gates in sequence. Each gate must pass before proceeding to the next: Reference Verification → Automated Validation → Humanizer Pass.
+After all subagents return their sections but before integration, run these three quality gates in sequence. Each gate must pass before proceeding to the next: Automated Validation → Targeted Web Verification → Humanizer Pass.
 
-### Step 4.1: Reference Verification
+**Why citation gates matter:** Fabricated or incorrect references are unacceptable in academic work. LLMs are known to hallucinate citation details (wrong titles, wrong authors, wrong venues, wrong page numbers, or entirely nonexistent papers). A single fabricated reference can result in desk rejection, loss of credibility, and accusations of academic misconduct. These are non-negotiable quality gates that MUST complete before presenting any draft to the user.
 
-**CRITICAL: This gate MUST be completed before presenting any draft to the user.** Fabricated or incorrect references are unacceptable in academic work. LLMs are known to hallucinate citation details (wrong titles, wrong authors, wrong venues, wrong page numbers, or entirely nonexistent papers). Every single reference must be verified against an authoritative external source.
-
-For EVERY entry in `references.bib`:
-
-1. **Search the web** for the paper using its title and first author.
-2. **Verify against an authoritative source** (DBLP, Crossref, Semantic Scholar, ACM DL, IEEE Xplore, arXiv, or the publisher's website):
-   - Title: exact match (including capitalization nuances)
-   - Authors: all authors listed, names spelled correctly
-   - Venue: correct conference/journal name, correct year
-   - Pages: correct page numbers from the official proceedings (NOT arXiv page numbers)
-   - Entry type: `@inproceedings` vs `@article` vs `@book` matches the actual publication type
-3. **If a reference cannot be verified**, flag it prominently and ask the user before including it.
-4. **Never guess or reconstruct** citation details from memory. Always look them up.
-
-**Procedure:**
-- Use a Task subagent with web search access to verify all references in parallel.
-- Output a verification report listing each reference as VERIFIED or FLAGGED.
-- Fix all FLAGGED entries before proceeding.
-- Save the verification report to `{project_dir}/manuscript/reference_verification.txt`.
-
-**Why this matters:** A single fabricated reference can result in desk rejection, loss of credibility, and accusations of academic misconduct. This is a non-negotiable quality gate.
-
-### Step 4.2: Automated Manuscript Validation
-
-Run the automated validation scripts before integration:
+### Step 4.1: Automated Validation (run the scripts FIRST)
 
 ```bash
 # 1. Validate manuscript structure, cross-references, and placeholders
@@ -278,27 +289,46 @@ python scripts/validate_manuscript.py \
     --output {project_dir}/manuscript/validation_report.txt
 
 # 2. Verify BibTeX citations (DOI + Crossref/S2 cross-check)
+#    NOTE: --tex-dir scans the WHOLE manuscript directory, not just sections/ —
+#    citations in main.tex must also be checked.
 python scripts/verify_citations_bibtex.py \
     --bib {project_dir}/manuscript/references.bib \
-    --tex-dir {project_dir}/manuscript/sections/ \
+    --tex-dir {project_dir}/manuscript/ \
+    --strict \
     --output {project_dir}/manuscript/citation_verification.txt
 
 # 3. Check for remaining verification flags
-grep -rn "NEEDS-VERIFICATION" {project_dir}/manuscript/sections/
+grep -rn "NEEDS-VERIFICATION" {project_dir}/manuscript/
 ```
 
-The citation verifier cross-checks against Crossref (primary) and Semantic Scholar (fallback) in addition to DOI resolution. Entries flagged as SUSPICIOUS due to author/year/venue mismatch are the most common LLM hallucination type (correct-sounding title, wrong metadata) and MUST be manually corrected.
+The citation verifier cross-checks against Crossref (primary) and Semantic Scholar (fallback) in addition to DOI resolution. Entries flagged as SUSPICIOUS due to author/year/venue mismatch are the most common LLM hallucination type (correct-sounding title, wrong metadata).
+
+**Exit-code semantics:** with `--strict`, the script exits non-zero on any SUSPICIOUS or UNVERIFIED entry. (Without `--strict`, it exits 2 when SUSPICIOUS > 0.) A non-zero exit means the gate has NOT passed.
 
 **Quality gates:**
 - `validate_manuscript.py` must report 0 errors (warnings are acceptable)
-- `verify_citations_bibtex.py` must report 0 SUSPICIOUS entries (DOI mismatches, Crossref/S2 author/year/venue mismatches)
+- `verify_citations_bibtex.py` must exit 0 — no SUSPICIOUS or UNVERIFIED entries remaining (after Step 4.2 resolution)
 - No remaining `NEEDS-VERIFICATION` flags (all must be resolved)
 
-If any gate fails:
-1. Fix the identified issues
-2. Re-run the failing check
-3. Repeat until all gates pass. **Maximum 5 attempts.** If gates still fail after 5 rounds, present the remaining issues to the user for manual resolution.
-4. Only then proceed to integration
+### Step 4.2: Targeted Web Verification (SUSPICIOUS / UNVERIFIED entries only)
+
+Web-verify ONLY the entries the script marked `SUSPICIOUS` or `UNVERIFIED` in Step 4.1 — entries the script verified do not need a second manual pass.
+
+For each flagged entry, use a Task subagent with web search access to check against an authoritative source (DBLP, Crossref, Semantic Scholar, ACM DL, IEEE Xplore, arXiv, or the publisher's website):
+- Title: exact match (including capitalization nuances)
+- Authors: all authors listed, names spelled correctly
+- Venue: correct conference/journal name, correct year
+- Pages: correct page numbers from the official proceedings (NOT arXiv page numbers)
+- Entry type: `@inproceedings` vs `@article` vs `@book` matches the actual publication type
+
+**Handling:**
+- `SUSPICIOUS` (metadata mismatch) → MUST be fixed to match the authoritative source, or removed from `references.bib` and the citing text.
+- `UNVERIFIED` (script could not confirm the entry exists) → needs manual web confirmation; if it cannot be confirmed against any authoritative source, remove it. If in doubt, ask the user before keeping it.
+- **Never guess or reconstruct** citation details from memory. Always look them up.
+
+Save the verification report (each flagged entry → resolution) to `{project_dir}/manuscript/reference_verification.txt`.
+
+**Gate loop:** after fixing/removing entries, re-run Step 4.1. Repeat until all gates pass. **Maximum 5 attempts.** If gates still fail after 5 rounds, present the remaining issues to the user for manual resolution. Only then proceed.
 
 ### Step 4.3: Humanizer Pass
 
@@ -309,13 +339,13 @@ After all sections are written and references are verified, review each section 
 2. Review the changes — ensure technical accuracy is preserved (automated or manual edits may occasionally simplify domain-specific phrasing that should stay).
 3. Pay special attention to the Introduction and Discussion sections, which are most prone to AI writing patterns.
 
-**This gate runs AFTER reference verification (Step 4.1) and automated validation (Step 4.2), but BEFORE integration (Step 5).** The humanizer pass operates on individual section files so that changes are isolated and reviewable.
+**This gate runs AFTER automated validation (Step 4.1) and targeted web verification (Step 4.2), but BEFORE integration (Step 5).** The humanizer pass operates on individual section files so that changes are isolated and reviewable.
 
 ## Step 5: Integration
 
 After all subagents return their sections AND references are verified AND the humanizer pass is complete:
 
-1. **Assemble** `main.tex` with all `\input{}` statements.
+1. **Assemble** `main.tex` as ONE self-contained file: inline the full content of every `sections/*.tex` file AND every `tables/*.tex` fragment directly into `main.tex`, in final section order. **The final deliverable contains NO `\input{sections/...}` or `\input{tables/...}` statements.** The `sections/*.tex` files are kept on disk as intermediate artifacts, but `main.tex` must compile standalone (plus `references.bib`, `style/`, and the graphics files — `\includegraphics{figures/...}` paths remain as-is; figures are not inlined).
 2. **Figure script verification**: If figure/visualization generation scripts exist (e.g., under `{project_dir}/manuscript/figures/`), verify that their experimental configuration matches the project's current default. Scripts that compute values at runtime (train decoders, compute metrics) are especially prone to config drift. Re-run any script whose config is stale.
 3. **Consistency check**:
    - Notation: Are symbols used consistently across sections?
@@ -404,6 +434,10 @@ Figures included:
   ⬜ fig_method_overview.pdf — PLACEHOLDER (you need to create this)
 
 The manuscript PDF is at: {project_dir}/manuscript/main.pdf
+The LaTeX source is a single self-contained file: {project_dir}/manuscript/main.tex
+(all sections and tables inlined — no \input{}; figures are separate graphics
+files under figures/; per-section drafts are kept under sections/ as
+intermediate artifacts)
 
 ⚠️ Action items for you:
   1. Create the method overview figure (see suggestions above).
@@ -444,6 +478,6 @@ After user confirms ready for review:
 
 If the user requests changes:
 1. Read the specific feedback.
-2. Edit the relevant section(s) using str_replace or rewrite.
+2. Edit the relevant section in place (or rewrite it if the change is large). Since section content is inlined, apply the edit to `main.tex`; if you also keep `sections/*.tex` in sync, update both.
 3. Recompile and present the updated PDF.
 4. Repeat until the user is satisfied.

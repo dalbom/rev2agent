@@ -169,10 +169,11 @@ def check_citations(tex_files: List[Path], bib_path: Path, base: Path) -> List[I
 
 _LABEL_RE = re.compile(r'\\label\{([^}]+)\}')
 
-# \ref, \eqref, \autoref, \cref, \Cref, \pageref, \nameref, \hyperref[label]
+# \ref, \eqref, \autoref, \cref, \Cref, \pageref, \nameref, \hyperref[label],
+# including starred variants (\ref*, \cref*, \Cref*, ...)
 _REF_RE = re.compile(
-    r'\\(?:eq)?ref\{([^}]+)\}'
-    r'|\\(?:auto|c|C|page|name)ref\{([^}]+)\}'
+    r'\\(?:eq)?ref\*?\{([^}]+)\}'
+    r'|\\(?:auto|c|C|page|name)ref\*?\{([^}]+)\}'
     r'|\\hyperref\[([^\]]+)\]'
 )
 
@@ -202,9 +203,14 @@ def extract_refs(tex_files: List[Path], base: Path) -> Dict[str, List[Tuple[str,
             line = strip_comments(raw_line)
             for m in _REF_RE.finditer(line):
                 # The regex has three capture groups; exactly one will be non-None
-                lbl = m.group(1) or m.group(2) or m.group(3)
-                if lbl:
-                    refs[lbl.strip()].append((display, lineno))
+                lbls = m.group(1) or m.group(2) or m.group(3)
+                if not lbls:
+                    continue
+                # \cref{fig:a,fig:b} references multiple labels: split on commas
+                for lbl in lbls.split(','):
+                    lbl = lbl.strip()
+                    if lbl:
+                        refs[lbl].append((display, lineno))
     return refs
 
 
@@ -342,9 +348,10 @@ _INCLUDEGRAPHICS_RE = re.compile(
 def check_figures(tex_files: List[Path], manuscript_dir: Path, base: Path) -> List[Issue]:
     issues: List[Issue] = []
 
-    # Also check for \graphicspath{...}
+    # Also check for \graphicspath{{dir1/}{dir2/}} (standard syntax: the
+    # argument is a sequence of brace-wrapped directories)
     graphics_paths: List[Path] = [manuscript_dir]
-    _graphicspath_re = re.compile(r'\\graphicspath\{([^}]+)\}')
+    _graphicspath_re = re.compile(r'\\graphicspath\s*\{((?:\s*\{[^{}]*\})+)\s*\}')
 
     for tex_path in tex_files:
         lines = read_file_lines(tex_path)
@@ -352,9 +359,9 @@ def check_figures(tex_files: List[Path], manuscript_dir: Path, base: Path) -> Li
             line = strip_comments(raw_line)
             m = _graphicspath_re.search(line)
             if m:
-                # \graphicspath{{dir1/}{dir2/}} — extract the inner braces
+                # Extract each inner {dir/} group
                 inner = m.group(1)
-                for dm in re.finditer(r'\{([^}]*)\}', inner):
+                for dm in re.finditer(r'\{([^{}]*)\}', inner):
                     p = Path(dm.group(1))
                     if not p.is_absolute():
                         p = manuscript_dir / p

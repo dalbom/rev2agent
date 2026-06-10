@@ -1,0 +1,8 @@
+[project]
+name = "rev2agent-scripts"
+version = "0.1.0"
+description = "Stdlib-only validation and result-collection scripts for the Rev2Agent research pipeline"
+requires-python = ">=3.10"
+# Runtime: Python standard library only. No dependencies, by design.
+# Tests: stdlib unittest (run with `python3 -m unittest discover tests`).
+dependencies = []

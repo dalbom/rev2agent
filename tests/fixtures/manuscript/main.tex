@@ -1,0 +1,31 @@
+\documentclass{article}
+\graphicspath{{figures/}{plots/}}
+\begin{document}
+\begin{abstract}
+Abstract text.
+\end{abstract}
+\section{Introduction}
+Intro text \cite{nested2024}.
+\section{Related Work}
+Related work shown in \cref{fig:a,fig:b} and \Cref*{tab:results}.
+\section{Method}
+Method text. See Figure~\ref{fig:a}.
+\section{Experiments}
+Experiments text.
+\begin{figure}
+\includegraphics[width=\linewidth]{plot}
+\caption{A plot.}
+\label{fig:a}
+\end{figure}
+\begin{figure}
+\includegraphics{figures/other.png}
+\caption{B plot.}
+\label{fig:b}
+\end{figure}
+\begin{table}
+\caption{Results table.}
+\label{tab:results}
+\end{table}
+\section{Conclusion}
+Done.
+\end{document}

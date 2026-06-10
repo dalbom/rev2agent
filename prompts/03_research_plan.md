@@ -11,11 +11,19 @@ Direct conversation with the user. This phase requires careful deliberation and 
 - Literature findings (read from `{project_dir}/literature/`)
 - Baseline SOTA results
 
+## Re-entry from Phase 6 (new research plan)
+
+Phase 3 may be re-entered from Phase 6 when an approach failed entirely. In that case:
+
+- **Do NOT reset `current_round`.** Round numbers are monotonic across research plans and never reset (see `prompts/conventions.md`, Round Numbering). `current_round` keeps its value during Phase 3; the new plan's first round simply continues the sequence (e.g., Round 6 after a plan change following Round 5).
+- Ensure a `new_research_plan` event is logged in `phase_history` (format in `prompts/conventions.md`). Phase 6 logs it when routing here; if it is missing, log it now.
+- **Keep all old round folders and roadmap entries** — they are evidence, not clutter. Add a plan-boundary section break to `{project_dir}/research_roadmap.md` marking where the new plan begins.
+
 ## Steps
 
 ### 3.1 Research Question Formulation
 
-If the `research-deep-dive` skill is available, use it to conduct a targeted deep dive on the selected direction. Otherwise, use WebSearch to research: the specific method/approach chosen in Phase 2, its known limitations, recent advances, and unexplored variations. Use the findings to ensure the research question targets a genuine gap and avoids duplicating existing work.
+If the `research-deep-dive` skill is available, use it to conduct a targeted deep dive on the selected direction. Otherwise, use web search to research: the specific method/approach chosen in Phase 2, its known limitations, recent advances, and unexplored variations. Use the findings to ensure the research question targets a genuine gap and avoids duplicating existing work.
 
 Refine the broad direction into a precise research question. A good research question is:
 - **Specific**: Not "Does synthetic data help?" but "Does training on GTA-V synthetic data with domain randomization improve Cityscapes semantic segmentation mIoU compared to training on Cityscapes alone?"
@@ -125,11 +133,11 @@ This file must exist before proceeding to Phase 4.
 
 ## State Update
 
-After user confirms:
+Field names and enum values follow `prompts/conventions.md`. After user confirms:
 - `current_phase`: `4`
 - `sub_step`: `null`
-- `current_round`: `1` (first experiment round begins)
+- `current_round`: increment by 1 — do NOT set to `1` unconditionally. Fresh project: `0` → `1` (first round). Re-entry from Phase 6 after Round N: `N` → `N+1` (rounds are monotonic and never reset; see `prompts/conventions.md`).
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - Update `topic.specific_topic`, `topic.research_question`, `topic.positioning`, `topic.target_venue`, `topic.target_dataset`, `topic.metrics`
-- Append to `phase_history`
+- Append to `phase_history` (entry format in `prompts/conventions.md`)

@@ -29,7 +29,7 @@
 - 모든 연구 방향을 로드맵에 기록. 라운드가 넘어가도 아이디어가 사라지지 않음
 - `major revision` 명령으로 외부 모델 + 호스트 기본 리뷰 에이전트가 함께 연구 방향 토론 (Phase 0에서 API 키 설정 필요)
 - 실험 코드를 실행하기 전에 외부 모델이 로직을 검증 (데이터 누수, split 오류 등)
-- 논문의 모든 수치는 결과 파일에서 직접 인용. "연구에 따르면..." 같은 출처 없는 표현 금지
+- 원고의 모든 주장을 fact / synthesis / 상식으로 태깅. "연구에 따르면..." 같은 출처 없는 표현 금지
 - BibTeX 엔트리를 Crossref/DBLP/Semantic Scholar에서 대조 (LLM은 인용의 ~30%를 지어냄)
 - 5명의 AI 리뷰어가 각자 다른 관점에서 최종 원고를 심사
 
@@ -53,13 +53,13 @@ flowchart TD
     P8 -.->|"추가 실험 필요"| P6
 ```
 
-Phase 4-6은 결과가 충분할 때까지 반복됩니다. 각 라운드의 결과와 남은 방향은 연구 로드맵에 누적 기록됩니다.
+각 프로젝트는 진행 상황을 추적하는 `.research_state.json` 파일과 함께 자체 디렉토리에 저장됩니다. 세션 중간에 떠났다가 며칠 뒤에 돌아와도 에이전트가 정확히 멈춘 지점부터 다시 시작합니다.
 
 ## 필요 사항
 
 - **지원되는 코딩 에이전트 호스트**
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- Codex
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+  - [Codex CLI](https://help.openai.com/en/articles/11096431-openai-codex-ci-getting-started)
 
 ### 선택 사항
 
@@ -118,43 +118,56 @@ Phase 전환이나 결과 평가 시점에 Reviewer 2로서 말합니다.
 
 | | Rev2Agent | 일반적인 연구 에이전트 |
 |---|---|---|
-| 구현 방식 | 마크다운 프롬프트만, 프레임워크 없음 | 전용 프레임워크 필요 |
-| 실험 반복 | 멀티 라운드 + 로드맵 추적 | 대부분 single-pass |
-| 코드 검증 | 실행 전 외부 모델이 로직 검증 | 없거나 린터 수준 |
-| 논문 품질 | 출처 태깅 + 인용 웹 검증 | 별도 검증 없음 |
-| 피어리뷰 | AI 리뷰어 5명 병렬 심사 | 없음 |
+| 구현 방식 | 마크다운 프롬프트만, 프레임워크 없음 | 전용 프레임워크 또는 SDK |
+| 실험 반복 | 영속 로드맵 기반 멀티 라운드 | single-pass 또는 수동 재실행 |
+| 코드 검증 | 외부 모델이 실험 로직 교차 검증 | 없거나 린터 수준 |
+| 인용 무결성 | 모든 레퍼런스를 웹에서 검증 | LLM이 생성한 BibTeX (자주 틀림) |
+| 원고 안전장치 | fact/synthesis 태깅, 출처 없는 표현 금지 | 체계적 검증 없음 |
+| 리뷰 | 5인 페르소나 모의 피어리뷰 | 없거나 single-pass |
 
 ## 프로젝트 구조
 
 ```
 rev2agent/
-├── AGENTS.md              # Codex용 엔트리포인트
-├── CLAUDE.md              # Claude Code용 엔트리포인트
-├── prompts/               # 페이즈별 프롬프트 (공유)
-│   ├── 00_setup.md
-│   ├── 01_interview.md
-│   ├── 02_literature_search.md
-│   ├── 03_research_plan.md
-│   ├── 04_experiment_design.md
-│   ├── 05_experiment_execution.md
-│   ├── 06_result_analysis.md
-│   ├── 07_manuscript_writing.md
-│   └── 08_manuscript_review.md
-├── scripts/               # 공유 검증/분석 스크립트
+├── AGENTS.md                    # Codex용 엔트리포인트
+├── CLAUDE.md                    # Claude Code용 엔트리포인트
+├── prompts/                     # 페이즈별 프롬프트 (호스트 간 공유)
+│   ├── conventions.md           # 공유 상태 스키마, enum, 라운드 규칙
+│   ├── 00_setup.md              # Phase 0: 환경 설정
+│   ├── 01_interview.md          # Phase 1: 주제 인터뷰
+│   ├── 02_literature_search.md  # Phase 2: 문헌 조사
+│   ├── 03_research_plan.md      # Phase 3: 연구 계획
+│   ├── 04_experiment_design.md  # Phase 4: 실험 설계
+│   ├── 05_experiment_execution.md # Phase 5: 실험 실행
+│   ├── 06_result_analysis.md    # Phase 6: 결과 분석
+│   ├── 07_manuscript_writing.md # Phase 7: 논문 작성
+│   ├── 08_manuscript_review.md  # Phase 8: 리뷰 패널
+│   └── compaction.md            # 페이즈 경계 새 세션 가이드
+├── scripts/                     # 공유 검증/분석 스크립트
 │   ├── verify_citations_bibtex.py  # BibTeX + Crossref/S2 교차 검증
-│   ├── collect_results.py          # 실험 결과 자동 수집 + 비교 테이블
+│   ├── collect_results.py          # 실험 결과 테이블 자동 생성
 │   ├── source_evaluator.py         # 문헌 소스 신뢰도 평가
 │   └── validate_manuscript.py      # LaTeX 교차참조/플레이스홀더 검증
-└── {project_dir}/         # 프로젝트별 디렉토리 (자동 생성)
-    ├── .research_state.json
-    ├── research_roadmap.md
-    ├── literature/
-    ├── experiment/
-    ├── manuscript/
-    └── summaries/
+├── tests/                       # 공유 스크립트 테스트 스위트
+├── .github/                     # CI 워크플로
+└── .gitignore
 ```
 
-하나의 저장소에서 여러 연구 프로젝트를 독립적으로 관리할 수 있습니다. 프롬프트와 스크립트는 공유, 프로젝트 데이터는 각 디렉토리에 분리됩니다.
+연구 프로젝트를 시작하면 에이전트가 아래 구조의 프로젝트 디렉토리를 만듭니다. 연구 프로젝트는 저장소 루트의 **untracked 하위 폴더**로 존재하며, 프레임워크의 git 히스토리에 포함되지 않습니다:
+
+```
+your_project/
+├── .research_state.json         # 세션 상태 (단일 진실 공급원)
+├── research_roadmap.md          # 영속 연구 방향 기록
+├── literature/                  # 논문 요약, BibTeX
+├── experiment/                  # 스크립트, 결과, 로그, 체크포인트
+├── manuscript/                  # LaTeX 소스, 그림, 표
+└── summaries/                   # 페이즈/라운드 문서
+```
+
+### 연구 데이터와 git
+
+프로젝트 하위 폴더는 기본적으로 git에서 무시됩니다(`.gitignore`가 프레임워크 소속이 아닌 모든 루트 레벨 디렉토리를 무시). 따라서 연구 데이터가 실수로 public fork에 push되는 일은 없습니다. 연구 데이터를 버전 관리하고 싶다면 프로젝트 폴더 안에 별도의 git 저장소를 만들거나, ignore 규칙을 제거한 자신만의 fork를 유지하세요.
 
 ## 변경 이력
 
@@ -162,4 +175,4 @@ rev2agent/
 
 ## 라이센스
 
-MIT
+[MIT](LICENSE)

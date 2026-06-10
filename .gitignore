@@ -1,10 +1,21 @@
-# Rev2Agent config (contains API keys)
+# Rev2Agent config (contains plaintext API keys — never commit)
 .rev2agent_config.json
 
-# Project outputs (large files)
-*/experiment/data/
-*/experiment/checkpoints/
-*/experiment/logs/
+# User research projects: every root-level directory that is not part of the
+# framework is a project dir and stays untracked by default. Gitignore cannot
+# condition on directory contents, so this is an allowlist of framework dirs.
+/*/
+!/prompts/
+!/scripts/
+!/tests/
+!/.github/
+
+# LaTeX compiler binary (users download it to the repo root)
+/tectonic
+
+# Compiled PDFs. Project dirs are already wholesale-ignored above; this rule
+# remains as a backstop for stray PDFs at the repo root or inside framework
+# dirs (e.g., test artifacts from manuscript compilation).
 *.pdf
 
 # Python

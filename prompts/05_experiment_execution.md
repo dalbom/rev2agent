@@ -78,6 +78,8 @@ A background Agent once zombified and repeatedly spawned rogue processes. Local 
    ```
    The user can stop any agent instantly with `touch {project_dir}/experiment/.kill_agent`.
 
+   **Kill flag hygiene:** Before launching ANY experiment agent, check whether `{project_dir}/experiment/.kill_agent` already exists. If it does, confirm with the user and delete it first — a stale flag means every new agent immediately self-terminates. See `prompts/conventions.md` "Stale kill flag".
+
 2. **PID recording**: Two PID files are tracked under `{project_dir}/experiment/logs/`:
    - `logs/run_all.pid` — written by the orchestrator launch command (`echo $! > logs/run_all.pid` in the nohup wrapper). Kills the whole `run_all.sh` loop.
    - `logs/current_pid` — written by each individual Python script at startup so the currently-training process can be killed without taking down the orchestrator:
@@ -87,7 +89,12 @@ A background Agent once zombified and repeatedly spawned rogue processes. Local 
      ```
    The user can kill either with `kill $(cat logs/run_all.pid)` or `kill $(cat logs/current_pid)`.
 
-3. **Single-agent rule**: Only one experiment-running Agent at a time. Before spawning a new Agent, verify no existing experiment processes are running via `ps aux | grep python | grep round`.
+3. **Single-agent rule**: Only one experiment-running Agent at a time. Before spawning a new Agent, verify no existing experiment processes are alive via the PID files:
+   ```bash
+   kill -0 $(cat {project_dir}/experiment/logs/run_all.pid) 2>/dev/null && echo "orchestrator still running"
+   kill -0 $(cat {project_dir}/experiment/logs/current_pid) 2>/dev/null && echo "training script still running"
+   ```
+   If either check reports a live process, do NOT spawn a new experiment agent.
 
 ## Experiment Result File Convention
 
@@ -121,7 +128,20 @@ Update INDEX.md every time a new result file is created.
 
 ## Sub-tasks (via Task Subagents)
 
-Launch these subagents in parallel:
+### Interface Contract (write BEFORE spawning any subagent)
+
+The setup subagents work independently, so they must share a single interface definition or their outputs will not compose. Before spawning Tasks 1-7, the MAIN agent writes `{project_dir}/experiment/configs/interface.md` specifying:
+
+- **Experiment IDs** — the exact IDs from the Phase 4 experiment matrix (E01, E02, A01, ...).
+- **CLI argument contract** — the exact command-line interface for `train.py`, `evaluate.py`, and each baseline runner (argument names, types, defaults).
+- **Checkpoint path and format** — where checkpoints are saved and what each contains.
+- **Result-file paths and `_meta` fields** — the result JSON locations per experiment and the required `_meta` schema (see "Experiment Result File Convention" above).
+
+**Every task prompt below MUST include the contents (or path) of `interface.md`.** Subagents implement against the contract; they do not invent their own conventions.
+
+### Spawn Ordering
+
+Tasks 1-5 and 7 may run in parallel. **Task 6 (run_all.sh) is spawned only AFTER Tasks 3-5 complete**, because it must call the actual CLIs of the scripts those tasks produced — pass the finished scripts' real invocations (not the contract alone) into the Task 6 prompt.
 
 ### Task 1: Environment Setup
 ```
@@ -244,8 +264,15 @@ Set up baseline methods for comparison:
 ```
 
 ### Task 6: Run Orchestrator
+
+(Spawn only after Tasks 3-5 complete — see "Spawn Ordering" above.)
+
 ```
 Write a master run script at {project_dir}/experiment/scripts/run_all.sh:
+
+You are given the ACTUAL CLI invocations of train.py, evaluate.py, and the
+baseline runners (written by earlier tasks). Call those exact CLIs — do not
+invent argument names.
 
 REQUIREMENTS:
 1. Run ALL experiments sequentially (or in parallel if multiple GPUs).
@@ -301,7 +328,7 @@ Once all subagents have finished:
 ```
 ✅ Experiment Setup Complete
 ─────────────────────────────
-Environment: research-{name} (micromamba)
+Environment: research-{project_dir} (micromamba)
 Datasets: [list with sizes]
 Experiments: [N] experiments × [M] seeds = [total] runs
 Scripts:
@@ -312,7 +339,7 @@ Scripts:
   - status.py ✅
 
 To start experiments:
-  $ conda activate research-{name}  # or micromamba
+  $ conda activate research-{project_dir}  # or micromamba
   $ cd {project_dir}/experiment
   $ mkdir -p logs
   $ nohup bash scripts/run_all.sh > logs/run.log 2>&1 &
@@ -354,14 +381,14 @@ Estimated total time: [X] hours on [GPU name]
 
 When experiments are launched:
 - `current_phase`: `5`
-- `sub_step`: `null`
+- `sub_step`: `null` — **always reset when Phase 5 begins**, regardless of whether the round arrived via normal design, refinement, or a Phase 4 skip
 - `current_round`: unchanged
 - `phase_status`: `"in_progress"`
 - `project_status`: unchanged
 - `experiment.status`: `"running"`
 - `experiment.scripts_ready`: `true`
 - Record PID and experiment details in `experiment.active_runs`
-- **Update roadmap:** Add the current round to the Active section with objective and expected duration.
+- **Update roadmap:** Add the current round to the Active section with objective and expected duration. If `{project_dir}/research_roadmap.md` does not exist yet (Round 1), create it using the skeleton in `prompts/06_result_analysis.md` "Roadmap File Format" before registering the round.
 - Append to `phase_history`
 
 ## On Experiment Completion

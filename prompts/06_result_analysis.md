@@ -21,17 +21,19 @@ Run the automated collection script FIRST:
 
 ```bash
 python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+    --fail-on-warnings \
     --output-md {project_dir}/experiment/results/comparison_table.md \
     --output-json {project_dir}/experiment/results/comparison_table.json
 ```
 
 Then read `comparison_table.md` and use it as the **sole source** for all numerical claims in this phase. If a number does not appear in the generated table, it does not exist — do not cite metrics from memory or from a quick glance at a JSON file.
 
-If the script reports warnings (missing `_meta`, unparseable files), fix those files before proceeding.
+**Exit-code semantics:** with `--fail-on-warnings`, the script exits non-zero when any result file has a missing `_meta` field or fails to parse. A non-zero exit is a hard gate — fix the offending result files and re-run until the script exits 0 before proceeding. (The script skips its own `comparison_table*.json` outputs during ingestion, so re-runs are safe.)
 
 To focus on specific metrics, use `--metric-keys`:
 ```bash
 python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+    --fail-on-warnings \
     --metric-keys cls_auc,recon_ssim,verif_auc \
     --output-md {project_dir}/experiment/results/comparison_table.md \
     --output-json {project_dir}/experiment/results/comparison_table.json
@@ -85,6 +87,8 @@ For each pair of methods being compared:
 5. Save results to {project_dir}/experiment/results/statistical_tests.json
 ```
 
+**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/` — must include a `_meta` field per the Result File Convention in `prompts/05_experiment_execution.md` (script, log file, timestamp, config, round). Without it, the next round's `collect_results.py --fail-on-warnings` gate fails on these files.
+
 After generating statistical test results, update `{project_dir}/experiment/results/INDEX.md` with any new result files created during analysis.
 
 ### 6.5 Figure Generation (via Task subagent)
@@ -119,7 +123,7 @@ Style requirements:
 
 ### 6.6 Code Verification
 
-Apply the full **Code Verification Protocol** (defined in `prompts/05_experiment_execution.md`, also summarized as a global rule in CLAUDE.md) to every analysis, statistical-test, and figure generation script written in this phase. This is the same 3-step protocol used for Phase 5 experiment scripts:
+Apply the full **Code Verification Protocol** (defined in `prompts/05_experiment_execution.md`) to every analysis, statistical-test, and figure generation script written in this phase. This is the same 3-step protocol used for Phase 5 experiment scripts:
 
 1. **External-model logical review** — verify data flow, train/val/test splits, feature–label correspondence.
 2. **Simplify code-quality pass** — unused imports, duplication, variable shadowing, memory efficiency, magic numbers.
@@ -150,15 +154,20 @@ This section handles planning the next experiment round by consulting the persis
 
 This section triggers after the analysis steps above (6.1–6.8) when the user is deciding what to do next. It also triggers after Phase 7 feedback when the user decides to run another experiment round. It does NOT trigger if the user is proceeding directly to final manuscript submission with no further experiments planned.
 
+**Phase 8 re-entry mode:** If entering Phase 6 from Phase 8 (review-driven experiments), the previous round is already closed — skip steps 6.1–6.8 and go directly to Round Planning, seeding candidate directions from `{project_dir}/manuscript/review_synthesis.md`. Increment `current_round` when the new round is confirmed, as usual.
+
 ### 6.9 Read the Roadmap
 
 Before proposing any options for the next round:
 
 ```
 1. Read {project_dir}/research_roadmap.md in full.
-2. Read the latest result analysis ({project_dir}/summaries/phase6_results.md or equivalent).
+2. Read the latest result analysis ({project_dir}/summaries/round{N}_{short_name}/phase6_results.md, latest round).
 3. Read any feedback files ({project_dir}/feedback_*.md) if they exist and are newer than the last roadmap update.
+4. Read {project_dir}/manuscript/review_synthesis.md if Phase 8 has run.
 ```
+
+**Feedback file convention:** the user may drop external feedback (e.g., advisor comments, real reviewer comments) into the project root as `{project_dir}/feedback_*.md` at any time. Always check for these files when planning a round.
 
 ### 6.10 Update Roadmap
 
@@ -238,15 +247,27 @@ Once the user picks a direction:
 2. **Keep all non-chosen directions in Pending** at their current priority level.
 3. **If a new direction was proposed in the options but not chosen**, add it to the appropriate Pending tier.
 4. **Mid-round abandonment (special case):** If the user explicitly abandons the currently Active direction (e.g., a pivot mid-round) instead of completing it, move it directly from Active to Abandoned with a reason from the enum. It does NOT need to pass through Completed first.
-5. **Config drift check**: If the chosen direction changes the project's default experimental configuration (e.g., architecture, output dimensions, number of layers, preprocessing), scan all Python scripts under `{project_dir}/` for hardcoded references to the old config. Flag any scripts that need updating — especially figure/visualization generation scripts, which are often written once and not revisited when the default config evolves. See CLAUDE.md "Config Drift Check" for details.
+5. **Config drift check** (this prompt owns the protocol): If the chosen direction changes the project's default experimental configuration (e.g., architecture, output dimensions, number of layers, preprocessing), scan all Python scripts under `{project_dir}/` for hardcoded references to the old config (grep for the old values: dimensions, layer counts, model names, paths). Flag any scripts that need updating — especially figure/visualization generation scripts, which are often written once and not revisited when the default config evolves. List the flagged scripts to the user, update them before the next round runs, and note the config change in `{project_dir}/manuscript/data_provenance.md` if a manuscript exists (runtime-computed figure values are the highest-risk entries for drift).
 6. **Write the updated roadmap to disk.**
 7. **Proceed to Phase 4 (Experiment Design) or Phase 5 (Experiment Execution)** as appropriate for the chosen direction.
 
+### When to set `sub_step: "refinement"`
+
+When routing back to Phase 4, set `sub_step` to `"refinement"` (Phase 4 then runs in Refinement Mode — see `prompts/04_experiment_design.md`) if ANY of the following holds:
+
+- **Mandatory after Round 1** — the first round is always treated as a pilot.
+- A key metric deviates **10+ percentage points** from expectations.
+- An experiment reveals the paper's **positioning must change** (e.g., an attack succeeds, a baseline beats the proposed method).
+- A **confound or artifact** was discovered in the data.
+- The **default config changes** (architecture, dimensions, etc.).
+
+Otherwise set `sub_step: null` for a normal Phase 4 design round. Refinement rounds still execute Phase 4 in full and require `phase4_experiment_design.md`.
+
 ### 6.13 Write Round Summary
 
-After completing a round, write `round_summary.md` in the round subfolder. See CLAUDE.md "Directory Structure" for the subfolder layout and "Phase Transition Checklist" for the file existence requirements.
+After completing a round, write `round_summary.md` in the round subfolder. See `prompts/conventions.md` for the subfolder layout and the summary-file checklist.
 
-**Required files in the round subfolder** (per CLAUDE.md Phase Transition Checklist): `round_summary.md`, `phase5_experiment_log.md`, `phase6_results.md`. `phase4_experiment_design.md` is required only if Phase 4 was executed this round — refinement rounds may skip it. `phase7_manuscript.md` is NOT per-round; it is a single file at `summaries/phase7_manuscript.md` updated across rounds.
+**Required files in the round subfolder** (per the checklist in `prompts/conventions.md`): `round_summary.md`, `phase5_experiment_log.md`, `phase6_results.md`. `phase4_experiment_design.md` is required only if Phase 4 was executed this round — rounds that route directly to Phase 5 (identical config) may skip it; refinement rounds always execute Phase 4 and therefore always require it. `phase7_manuscript.md` is NOT per-round; it is a single file at `summaries/phase7_manuscript.md` updated across rounds.
 
 **`round_summary.md` contents** (mandatory — must be readable without `.research_state.json` or the conversation history):
 
@@ -261,7 +282,7 @@ After completing a round, write `round_summary.md` in the round subfolder. See C
 If `{project_dir}/research_roadmap.md` does not exist when this phase triggers:
 
 1. Review all phase summaries in `{project_dir}/summaries/`.
-2. Review any feedback files in `{project_dir}/`.
+2. Review any feedback files (`{project_dir}/feedback_*.md` — external feedback such as advisor comments or real reviews that the user may drop into the project root), and `{project_dir}/manuscript/review_synthesis.md` if Phase 8 has run.
 3. Review the phase history in `.research_state.json`.
 4. Compile all mentioned-but-not-pursued directions into a roadmap.
 5. Classify completed rounds as Completed, current work as Active, everything else as Pending.
@@ -375,7 +396,7 @@ If results don't support the hypothesis, or if results are positive but could be
    e. Target a different venue (workshop, findings track).
 3. Let the user decide, but **default to recommending improvements when they have clear potential**, rather than settling for weak results.
 
-**Important**: See CLAUDE.md "Research Philosophy: Impact Over Speed". If analysis reveals a fundamentally better approach, recommend looping back to Phase 3 or Phase 4 rather than settling for weak results — each iteration builds on what was learned before.
+**Important**: Impact takes precedence over speed — there are no deadlines driving this work. If analysis reveals a fundamentally better approach, recommend looping back to Phase 3 or Phase 4 rather than settling for weak results — each iteration builds on what was learned before.
 
 ## Phase Summary
 
@@ -394,7 +415,7 @@ After user confirms results AND picks next direction (or confirms manuscript):
 
 **If proceeding to another round (Phase 4):**
 - `current_phase`: `4`
-- `sub_step`: `null` (normal) or `"refinement"` (if reframing needed — see criteria in CLAUDE.md)
+- `sub_step`: `null` (normal) or `"refinement"` (if reframing needed — see "When to set `sub_step: \"refinement\"`" above)
 - `current_round`: increment by 1
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
@@ -403,6 +424,19 @@ After user confirms results AND picks next direction (or confirms manuscript):
 - `results.user_confirmed`: `true`
 - **Update roadmap:** Move current round to Completed, mark chosen direction as Active
 - Append to `phase_history`
+
+**If proceeding directly to Phase 5 (identical config — additional seeds/repetitions only, no design changes):**
+- `current_phase`: `5`
+- `sub_step`: `null`
+- `current_round`: increment by 1
+- `phase_status`: `"not_started"`
+- `project_status`: unchanged
+- `experiment.status`: `"completed"`
+- Populate `results.raw_results_path`, `results.analysis_summary`
+- `results.user_confirmed`: `true`
+- **Assign the round's `short_name`** during round planning (Phase 4 will not run for this round — see `prompts/conventions.md` "Round Numbering")
+- **Update roadmap:** Move current round to Completed, mark chosen direction as Active
+- Append a `phase4_skipped` event to `phase_history` (entry format in `prompts/conventions.md`)
 
 **If proceeding to manuscript (Phase 7):**
 - `current_phase`: `7`
@@ -419,8 +453,9 @@ After user confirms results AND picks next direction (or confirms manuscript):
 **If returning to Phase 3 (fundamental rethink):**
 - `current_phase`: `3`
 - `sub_step`: `null`
-- `current_round`: `0` (reset — new research plan starts fresh)
+- `current_round`: unchanged — **round numbers are monotonic and NEVER reset** (see `prompts/conventions.md` "Round Numbering"); the new plan's first round continues the sequence
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - `experiment.status`: `"completed"`
-- Append to `phase_history` with explanation of why rethink was needed
+- Keep all existing round folders and roadmap entries; add a plan-boundary marker (section break) to `research_roadmap.md`
+- Append a `new_research_plan` event to `phase_history` (entry format in `prompts/conventions.md`) with explanation of why rethink was needed

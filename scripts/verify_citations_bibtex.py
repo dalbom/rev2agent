@@ -17,14 +17,45 @@ Requires only Python 3.10+ stdlib (no external dependencies).
 
 import sys
 import argparse
+import datetime
+import os
 import re
 import json
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib import request, error
 import unicodedata
 from urllib.parse import quote, urlencode
+
+
+# ---------------------------------------------------------------------------
+# HTTP identification (Crossref polite pool + doi.org)
+# ---------------------------------------------------------------------------
+
+# Contact for the Crossref polite pool. Set via --mailto flag or the
+# CROSSREF_MAILTO environment variable; if neither is set, the mailto
+# clause is omitted entirely (anonymous pool).
+_mailto_contact: Optional[str] = None
+
+
+def set_mailto(contact: Optional[str]) -> None:
+    """Set the Crossref polite-pool contact (from the --mailto flag)."""
+    global _mailto_contact
+    _mailto_contact = contact
+
+
+def _user_agent() -> str:
+    """Build the User-Agent string, including mailto: only if configured."""
+    contact = _mailto_contact or os.environ.get("CROSSREF_MAILTO")
+    if contact:
+        return f"BibTeX-Citation-Verifier/2.0 (mailto:{contact})"
+    return "BibTeX-Citation-Verifier/2.0"
+
+
+def resolve_s2_key(cli_value: Optional[str]) -> Optional[str]:
+    """Resolve the Semantic Scholar API key: --s2-key flag, then S2_API_KEY env."""
+    return cli_value or os.environ.get("S2_API_KEY") or None
 
 
 # ---------------------------------------------------------------------------
@@ -43,15 +74,105 @@ _ENTRY_START_RE = re.compile(
     r"@(\w+)\s*\{\s*([^,\s]+)\s*,", re.IGNORECASE
 )
 
-# Regex to extract a field:  fieldname = {value}  or  fieldname = "value"  or  fieldname = number
-# Supports up to 3 levels of brace nesting (needed for LaTeX accents like {\"{u}})
-_FIELD_RE = re.compile(
-    r"(\w+)\s*=\s*(?:\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}|\"([^\"]*)\"|(\d+))",
-    re.DOTALL,
-)
+_FIELD_NAME_RE = re.compile(r"[A-Za-z][\w\-]*")
 
 
-def parse_bibtex(text: str) -> Dict[str, Dict[str, str]]:
+def _parse_fields(
+    body: str,
+    key: str = "",
+    warnings: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """
+    Tokenize a BibTeX entry body into fields using brace-depth counting.
+
+    Handles arbitrary brace nesting in {...} values, escaped quotes (\\")
+    in "..." values, bare numbers, and unexpanded @string macro references
+    (warned and skipped, never silently dropped).
+    """
+    fields: Dict[str, str] = {}
+    pos = 0
+    n = len(body)
+
+    while pos < n:
+        # Skip whitespace and field separators
+        while pos < n and (body[pos].isspace() or body[pos] == ","):
+            pos += 1
+        if pos >= n:
+            break
+
+        # Field name
+        m = _FIELD_NAME_RE.match(body, pos)
+        if not m:
+            pos += 1
+            continue
+        fname = m.group(0).lower()
+        pos = m.end()
+
+        # Expect '='
+        while pos < n and body[pos].isspace():
+            pos += 1
+        if pos >= n or body[pos] != "=":
+            continue  # stray token, not a field assignment
+        pos += 1
+        while pos < n and body[pos].isspace():
+            pos += 1
+        if pos >= n:
+            break
+
+        c = body[pos]
+        if c == "{":
+            # Brace-delimited value: count depth until the matching '}'
+            depth = 1
+            pos += 1
+            start = pos
+            while pos < n and depth > 0:
+                if body[pos] == "{":
+                    depth += 1
+                elif body[pos] == "}":
+                    depth -= 1
+                pos += 1
+            fval = body[start : pos - 1]
+        elif c == '"':
+            # Quote-delimited value: honor escaped quotes (\")
+            pos += 1
+            chars: List[str] = []
+            while pos < n:
+                ch = body[pos]
+                if ch == "\\" and pos + 1 < n:
+                    chars.append(body[pos : pos + 2])
+                    pos += 2
+                    continue
+                if ch == '"':
+                    break
+                chars.append(ch)
+                pos += 1
+            fval = "".join(chars)
+            pos += 1  # skip closing quote
+        else:
+            # Bare value: a number, or an unexpanded @string macro reference
+            m2 = re.match(r"[^,\n]+", body[pos:])
+            raw = m2.group(0).strip() if m2 else ""
+            pos += m2.end() if m2 else 1
+            if re.fullmatch(r"\d+", raw):
+                fval = raw
+            else:
+                if warnings is not None and raw:
+                    warnings.append(
+                        f"Entry '{key}': field '{fname}' references unexpanded "
+                        f"@string macro '{raw}' -- field skipped"
+                    )
+                continue
+
+        # Collapse internal whitespace
+        fval = re.sub(r"\s+", " ", fval).strip()
+        fields[fname] = fval
+
+    return fields
+
+
+def parse_bibtex(
+    text: str, warnings: Optional[List[str]] = None
+) -> Dict[str, Dict[str, str]]:
     """
     Parse BibTeX source text into a dict keyed by citation key.
 
@@ -61,6 +182,8 @@ def parse_bibtex(text: str) -> Dict[str, Dict[str, str]]:
         title, author, year, doi, url, booktitle, journal, ... (as present)
 
     Field values have outer braces / quotes stripped but inner LaTeX is kept.
+    If a `warnings` list is provided, non-fatal parse problems (duplicate
+    keys, unexpanded @string macros) are appended to it.
     """
     entries: Dict[str, Dict[str, str]] = {}
 
@@ -88,18 +211,16 @@ def parse_bibtex(text: str) -> Dict[str, Dict[str, str]]:
             pos += 1
         body = text[start : pos - 1]
 
+        if key in entries:
+            if warnings is not None:
+                warnings.append(
+                    f"Duplicate entry key '{key}' -- keeping first occurrence"
+                )
+            continue
+
         # Extract fields from the body
         fields: Dict[str, str] = {"_type": entry_type, "_key": key}
-        for fm in _FIELD_RE.finditer(body):
-            fname = fm.group(1).lower()
-            # value is in group 2 (braces), 3 (quotes), or 4 (bare number)
-            fval = fm.group(2) if fm.group(2) is not None else (
-                fm.group(3) if fm.group(3) is not None else fm.group(4)
-            )
-            if fval is not None:
-                # Collapse internal whitespace
-                fval = re.sub(r"\s+", " ", fval).strip()
-                fields[fname] = fval
+        fields.update(_parse_fields(body, key=key, warnings=warnings))
 
         entries[key] = fields
 
@@ -110,30 +231,55 @@ def parse_bibtex(text: str) -> Dict[str, Dict[str, str]]:
 # LaTeX Citation Scanner
 # ---------------------------------------------------------------------------
 
-# Matches \cite{...}, \citep{...}, \citet{...}, \citeauthor{...}, etc.
-_CITE_RE = re.compile(r"\\cite\w*\{([^}]+)\}")
+# Matches \cite{...}, \citep{...}, \citet{...}, \citeauthor{...}, including
+# starred forms (\citet*{...}) and optional [...] arguments, possibly multiple
+# (e.g. \citep[e.g.][]{key}, \cite[p.~3]{key}).
+_CITE_RE = re.compile(r"\\[Cc]ite[a-zA-Z]*\*?\s*(?:\[[^\]]*\]\s*)*\{([^}]+)\}")
 
 
-def scan_tex_citations(tex_dir: Path) -> Tuple[Set[str], Dict[str, List[str]]]:
+def _strip_tex_comments(text: str) -> str:
+    """Remove LaTeX line comments (% to end of line), respecting escaped \\%."""
+    stripped_lines: List[str] = []
+    for line in text.split("\n"):
+        out: List[str] = []
+        i = 0
+        while i < len(line):
+            if line[i] == "%" and (i == 0 or line[i - 1] != "\\"):
+                break
+            out.append(line[i])
+            i += 1
+        stripped_lines.append("".join(out))
+    return "\n".join(stripped_lines)
+
+
+def scan_tex_citations(
+    tex_dir: Path,
+) -> Tuple[Set[str], Dict[str, List[str]], List[str]]:
     """
     Scan all .tex files under tex_dir (recursively) for \\cite commands.
+    LaTeX comments are stripped before matching.
 
     Returns:
         cited_keys : set of all citation keys referenced
         key_to_files: dict mapping each key to list of files where it appears
+        warnings   : list of warnings (e.g., unreadable files)
     """
     cited_keys: Set[str] = set()
     key_to_files: Dict[str, List[str]] = {}
+    warnings: List[str] = []
 
     tex_files = sorted(tex_dir.rglob("*.tex"))
     if not tex_files:
-        return cited_keys, key_to_files
+        return cited_keys, key_to_files, warnings
 
     for tf in tex_files:
         try:
             content = tf.read_text(encoding="utf-8")
-        except Exception:
+        except Exception as e:
+            warnings.append(f"Cannot read .tex file {tf}: {e}")
             continue
+
+        content = _strip_tex_comments(content)
 
         for m in _CITE_RE.finditer(content):
             # Handle multi-key citations: \cite{key1,key2,key3}
@@ -144,29 +290,41 @@ def scan_tex_citations(tex_dir: Path) -> Tuple[Set[str], Dict[str, List[str]]]:
                     cited_keys.add(k)
                     key_to_files.setdefault(k, []).append(str(tf.relative_to(tex_dir)))
 
-    return cited_keys, key_to_files
+    return cited_keys, key_to_files, warnings
 
 
 # ---------------------------------------------------------------------------
 # Verification Helpers
 # ---------------------------------------------------------------------------
 
-def verify_doi(doi: str) -> Tuple[bool, Dict]:
+def verify_doi(doi: str, retries: int = 3) -> Tuple[bool, Dict]:
     """
     Resolve a DOI via https://doi.org/ with CSL-JSON content negotiation.
+
+    Transient failures (URLError, timeout, HTTP 5xx/429) are retried up to
+    `retries` times with exponential backoff. A persistent network failure
+    is reported with metadata["network_error"] = True (retryable later);
+    an HTTP 404 means the DOI does not exist and is NOT retried.
 
     Returns (success, metadata_dict).
     On success, metadata_dict contains title, year, authors, venue.
     On failure, metadata_dict contains an 'error' key.
     """
-    try:
-        url = f"https://doi.org/{quote(doi, safe='/')}"
+    url = f"https://doi.org/{quote(doi, safe='/')}"
+    last_err = "unknown error"
+
+    for attempt in range(retries):
         req = request.Request(url)
         req.add_header("Accept", "application/vnd.citationstyles.csl+json")
-        req.add_header("User-Agent", "BibTeX-Citation-Verifier/1.0")
+        req.add_header("User-Agent", _user_agent())
 
-        with request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=15) as resp:
+                raw = resp.read().decode("utf-8")
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                return False, {"error": f"invalid JSON from doi.org: {str(e)[:80]}"}
             issued = data.get("issued", {}).get("date-parts", [[None]])
             year = issued[0][0] if issued and issued[0] else None
             authors = [
@@ -179,14 +337,25 @@ def verify_doi(doi: str) -> Tuple[bool, Dict]:
                 "authors": authors,
                 "venue": data.get("container-title", ""),
             }
-    except error.HTTPError as e:
-        if e.code == 404:
-            return False, {"error": "DOI not found (404)"}
-        return False, {"error": f"HTTP {e.code}"}
-    except error.URLError as e:
-        return False, {"error": f"URL error: {e.reason}"}
-    except Exception as e:
-        return False, {"error": str(e)[:120]}
+        except error.HTTPError as e:
+            if e.code == 404:
+                return False, {"error": "DOI not found (404)"}
+            if e.code == 429 or e.code >= 500:
+                last_err = f"HTTP {e.code}"  # transient: retry
+            else:
+                return False, {"error": f"HTTP {e.code}"}
+        except error.URLError as e:
+            last_err = f"URL error: {e.reason}"
+        except (TimeoutError, OSError) as e:
+            last_err = f"{str(e)[:120]}"
+
+        if attempt < retries - 1:
+            time.sleep(2 ** attempt)
+
+    return False, {
+        "error": f"network error after {retries} attempts ({last_err})",
+        "network_error": True,
+    }
 
 
 def verify_url(url: str) -> Tuple[bool, str]:
@@ -261,25 +430,52 @@ CROSSREF_API_BASE = "https://api.crossref.org/works"
 
 
 def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None,
-                   retries: int = 3) -> Optional[Dict]:
-    """Generic HTTP GET returning parsed JSON, with retry on 429."""
+                   retries: int = 3,
+                   errors: Optional[List[str]] = None) -> Optional[Dict]:
+    """
+    Generic HTTP GET returning parsed JSON.
+
+    Retries with backoff on transient failures (HTTP 429/5xx, URLError,
+    timeout). Non-transient HTTP errors and JSON decode failures are not
+    retried; if an `errors` list is provided, failures are appended to it
+    instead of being silently swallowed.
+    """
+    def _note(msg: str) -> None:
+        if errors is not None:
+            errors.append(msg)
+
+    endpoint = url.split("?")[0]
+    last_err = "unknown error"
+
     for attempt in range(retries):
         req = request.Request(url)
-        req.add_header("User-Agent", "BibTeX-Citation-Verifier/2.0 (mailto:verify@example.com)")
+        req.add_header("User-Agent", _user_agent())
         if headers:
             for k, v in headers.items():
                 req.add_header(k, v)
         try:
             with request.urlopen(req, timeout=20) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                raw = resp.read().decode("utf-8")
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as e:
+                _note(f"JSON decode error from {endpoint}: {str(e)[:80]}")
+                return None
         except error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:
-                wait = 3 * (attempt + 1)
-                time.sleep(wait)
-                continue
-            return None
-        except (error.URLError, Exception):
-            return None
+            if e.code == 429 or e.code >= 500:
+                last_err = f"HTTP {e.code}"  # transient: retry
+            else:
+                _note(f"HTTP {e.code} from {endpoint}")
+                return None
+        except error.URLError as e:
+            last_err = f"URL error: {e.reason}"
+        except (TimeoutError, OSError) as e:
+            last_err = f"{str(e)[:120]}"
+
+        if attempt < retries - 1:
+            time.sleep(3 * (attempt + 1))
+
+    _note(f"network error after {retries} attempts from {endpoint} ({last_err})")
     return None
 
 
@@ -537,7 +733,7 @@ ANACHRONISTIC_TERMS = {
 }
 
 # Current year ceiling for future-year check
-CURRENT_YEAR = 2026
+CURRENT_YEAR = datetime.date.today().year
 
 
 def detect_hallucination_patterns(entry: Dict[str, str]) -> List[str]:
@@ -608,6 +804,51 @@ def detect_hallucination_patterns(entry: Dict[str, str]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
+# On-Disk Verification Cache
+# ---------------------------------------------------------------------------
+
+class VerificationCache:
+    """
+    Optional JSON cache (--cache PATH) keyed by DOI or normalized title,
+    so re-runs skip already-verified entries. Corrupt cache files are
+    ignored and rebuilt.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.data: Dict[str, Any] = {}
+        if self.path.exists():
+            try:
+                loaded = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    self.data = loaded
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+                self.data = {}
+
+    def get(self, key: str) -> Optional[Any]:
+        return self.data.get(key)
+
+    def set(self, key: str, value: Any) -> None:
+        self.data[key] = value
+
+    def save(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(
+                json.dumps(self.data, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as e:
+            print(f"WARNING: Could not save cache: {e}", file=sys.stderr)
+
+
+def normalize_title_key(title: str) -> str:
+    """Normalize a title into a stable cache key."""
+    clean = _clean_latex_title(title).lower()
+    return re.sub(r"[^\w]+", " ", clean).strip()
+
+
+# ---------------------------------------------------------------------------
 # Main Verifier Class
 # ---------------------------------------------------------------------------
 
@@ -630,6 +871,13 @@ class BibtexCitationVerifier:
     SUSPICIOUS = "SUSPICIOUS"
     UNVERIFIED = "UNVERIFIED"
 
+    # Issues containing these markers are "soft": they do not, by themselves,
+    # make an otherwise-unverifiable entry SUSPICIOUS.
+    SOFT_ISSUE_MARKERS = (
+        "No DOI and no URL",
+        "network error",
+    )
+
     def __init__(
         self,
         bib_path: Path,
@@ -638,6 +886,7 @@ class BibtexCitationVerifier:
         output_path: Optional[Path] = None,
         enable_s2: bool = True,
         s2_api_key: Optional[str] = None,
+        cache_path: Optional[Path] = None,
     ):
         self.bib_path = bib_path
         self.tex_dir = tex_dir
@@ -645,6 +894,9 @@ class BibtexCitationVerifier:
         self.output_path = output_path
         self.enable_s2 = enable_s2
         self.s2_api_key = s2_api_key
+        self.cache: Optional[VerificationCache] = (
+            VerificationCache(cache_path) if cache_path else None
+        )
 
         # Will be populated during verification
         self.entries: Dict[str, Dict[str, str]] = {}
@@ -653,6 +905,7 @@ class BibtexCitationVerifier:
         self.results: Dict[str, Dict] = {}  # key -> verification result
         self.missing_keys: Set[str] = set()  # cited but not in .bib
         self.orphan_keys: Set[str] = set()   # in .bib but not cited
+        self.suspicious_count: int = 0
 
         self._report_lines: List[str] = []
 
@@ -665,6 +918,35 @@ class BibtexCitationVerifier:
 
     def _separator(self, char: str = "=", width: int = 70) -> None:
         self._out(char * width)
+
+    # ---- Status computation ----
+
+    @classmethod
+    def _is_soft_issue(cls, issue: str) -> bool:
+        return any(marker in issue for marker in cls.SOFT_ISSUE_MARKERS)
+
+    @classmethod
+    def compute_entry_status(cls, result: Dict) -> str:
+        """
+        Compute the final status for one entry from explicit booleans.
+        Priority: mismatch / fabricated DOI > DOI > Crossref/S2 > URL > patterns.
+
+        Expects keys: doi_verified, url_verified, ext_verified, mismatch,
+        doi_not_found, issues.
+        """
+        if result.get("mismatch") or result.get("doi_not_found"):
+            return cls.SUSPICIOUS
+        if result.get("doi_verified"):
+            return cls.VERIFIED
+        if result.get("ext_verified"):
+            return cls.EXT_VERIFIED
+        if result.get("url_verified"):
+            return cls.URL_VERIFIED
+        hard_issues = [i for i in result.get("issues", [])
+                       if not cls._is_soft_issue(i)]
+        if hard_issues:
+            return cls.SUSPICIOUS
+        return cls.UNVERIFIED
 
     # ---- Core workflow ----
 
@@ -698,6 +980,10 @@ class BibtexCitationVerifier:
         # Step 5: Summary
         passed = self._step_summary()
 
+        # Persist the cache if one is configured
+        if self.cache:
+            self.cache.save()
+
         # Save report if requested
         if self.output_path:
             self._save_report()
@@ -714,8 +1000,11 @@ class BibtexCitationVerifier:
             self._out(f"  ERROR: Cannot read .bib file: {e}")
             sys.exit(1)
 
-        self.entries = parse_bibtex(bib_text)
+        parse_warnings: List[str] = []
+        self.entries = parse_bibtex(bib_text, warnings=parse_warnings)
         self._out(f"      Found {len(self.entries)} entries")
+        for w in parse_warnings:
+            self._out(f"      [!] {w}")
 
         # List them
         for key, fields in self.entries.items():
@@ -728,8 +1017,10 @@ class BibtexCitationVerifier:
         self._out("[2/5] Scanning .tex files for citations")
         self._out(f"      {self.tex_dir}")
 
-        self.cited_keys, self.key_to_files = scan_tex_citations(self.tex_dir)
+        self.cited_keys, self.key_to_files, scan_warnings = scan_tex_citations(self.tex_dir)
         self._out(f"      Found {len(self.cited_keys)} unique citation keys")
+        for w in scan_warnings:
+            self._out(f"      [!] {w}")
 
         tex_files = sorted(self.tex_dir.rglob("*.tex"))
         self._out(f"      Scanned {len(tex_files)} .tex files")
@@ -782,7 +1073,12 @@ class BibtexCitationVerifier:
                 "issues": [],
                 "doi_verified": False,
                 "url_verified": False,
+                "ext_verified": False,
+                "mismatch": False,        # metadata mismatch (title/author/year/venue)
+                "doi_not_found": False,   # DOI resolved to 404 (likely fabricated)
+                "network_error": False,   # transient network failure (retryable)
                 "doi_metadata": {},
+                "ext_metadata": {},
             }
 
             # 4a. Hallucination pattern detection
@@ -797,13 +1093,23 @@ class BibtexCitationVerifier:
             if doi:
                 self._out(f"    DOI   : {doi}")
                 self._out(f"    Resolving DOI ...", )
-                success, metadata = verify_doi(doi)
-                time.sleep(0.5)  # rate limit
+
+                cache_key = f"doi:{doi}"
+                cached = self.cache.get(cache_key) if self.cache else None
+                if cached is not None:
+                    success, metadata = cached["success"], cached["metadata"]
+                    self._out(f"    (from cache)")
+                else:
+                    success, metadata = verify_doi(doi)
+                    time.sleep(0.5)  # rate limit
+                    # Cache definitive outcomes only (never transient failures)
+                    if self.cache and not metadata.get("network_error"):
+                        self.cache.set(cache_key,
+                                       {"success": success, "metadata": metadata})
 
                 if success:
                     result["doi_verified"] = True
                     result["doi_metadata"] = metadata
-                    result["status"] = self.VERIFIED
                     self._out(f"    DOI resolved successfully")
 
                     # Check title similarity
@@ -816,7 +1122,7 @@ class BibtexCitationVerifier:
                                 f"(DOI title: '{metadata['title'][:60]}...')"
                             )
                             result["issues"].append(issue)
-                            result["status"] = self.SUSPICIOUS
+                            result["mismatch"] = True
                             self._out(f"    [!] {issue}")
 
                     # Check year match
@@ -827,12 +1133,16 @@ class BibtexCitationVerifier:
                             if int(bib_year) != int(doi_year):
                                 issue = f"Year mismatch: .bib says {bib_year}, DOI says {doi_year}"
                                 result["issues"].append(issue)
-                                result["status"] = self.SUSPICIOUS
+                                result["mismatch"] = True
                                 self._out(f"    [!] {issue}")
                         except ValueError:
                             pass
                 else:
                     err = metadata.get("error", "unknown error")
+                    if metadata.get("network_error"):
+                        result["network_error"] = True
+                    elif "404" in err:
+                        result["doi_not_found"] = True
                     result["issues"].append(f"DOI resolution failed: {err}")
                     self._out(f"    [X] DOI resolution failed: {err}")
             else:
@@ -848,9 +1158,6 @@ class BibtexCitationVerifier:
                 if accessible:
                     result["url_verified"] = True
                     self._out(f"    URL accessible: {status_msg}")
-                    # Upgrade from UNVERIFIED if DOI was absent
-                    if result["status"] == self.UNVERIFIED:
-                        result["status"] = self.URL_VERIFIED
                 else:
                     result["issues"].append(f"URL inaccessible: {status_msg}")
                     self._out(f"    [X] URL inaccessible: {status_msg}")
@@ -859,17 +1166,22 @@ class BibtexCitationVerifier:
 
             # 4d. External API cross-verification (Crossref primary, S2 fallback)
             # Skip if DOI already verified cleanly — no need to burn API calls
-            result["ext_verified"] = False
-            result["ext_metadata"] = {}
-            doi_clean = result["doi_verified"] and not any(
-                "mismatch" in i.lower() for i in result["issues"]
-            )
+            doi_clean = result["doi_verified"] and not result["mismatch"]
             if title and not doi_clean:
                 self._out(f"    API   : Searching Crossref ...")
-                found, ext_meta = search_external(
-                    title, enable_s2=self.enable_s2, s2_api_key=self.s2_api_key,
-                    bib_author=fields.get("author", ""),
-                )
+                ext_cache_key = f"title:{normalize_title_key(title)}"
+                cached = self.cache.get(ext_cache_key) if self.cache else None
+                if cached is not None:
+                    found, ext_meta = cached["found"], cached["metadata"]
+                    self._out(f"    (from cache)")
+                else:
+                    found, ext_meta = search_external(
+                        title, enable_s2=self.enable_s2, s2_api_key=self.s2_api_key,
+                        bib_author=fields.get("author", ""),
+                    )
+                    if self.cache and found:
+                        self.cache.set(ext_cache_key,
+                                       {"found": found, "metadata": ext_meta})
                 src = ext_meta.get("source", "?")
                 src_label = "Crossref" if src == "crossref" else "S2"
 
@@ -888,6 +1200,7 @@ class BibtexCitationVerifier:
                         if auth_sim < 0.5:
                             issue = f"Author mismatch ({src_label}): {'; '.join(auth_mismatches)}"
                             result["issues"].append(issue)
+                            result["mismatch"] = True
                             self._out(f"    [!] {issue}")
 
                     # Year cross-check
@@ -898,6 +1211,7 @@ class BibtexCitationVerifier:
                             if int(bib_year_str) != int(ext_year):
                                 issue = f"Year mismatch ({src_label}): bib={bib_year_str}, {src_label}={ext_year}"
                                 result["issues"].append(issue)
+                                result["mismatch"] = True
                                 self._out(f"    [!] {issue}")
                         except (ValueError, TypeError):
                             pass
@@ -914,45 +1228,21 @@ class BibtexCitationVerifier:
                                 f"bib=\"{bib_venue[:50]}\", {src_label}=\"{ext_venue[:50]}\""
                             )
                             result["issues"].append(issue)
+                            result["mismatch"] = True
                             self._out(f"    [!] {issue}")
 
-                    # Ext verified if no mismatch issues from this step
-                    ext_issues = [i for i in result["issues"]
-                                  if "(Crossref)" in i or "(S2)" in i]
-                    if not ext_issues:
+                    # Ext verified if no mismatch found in this step
+                    if not result["mismatch"]:
                         result["ext_verified"] = True
                 else:
                     err = ext_meta.get("error", "unknown")
                     self._out(f"    API   : {err}")
 
-            # 4e. Determine final status
-            # Priority: DOI > External API (Crossref/S2) > URL > pattern-based
+            # 4e. Determine final status (single source of truth)
             ext_src = result.get("ext_metadata", {}).get("source", "s2")
             ext_label = "Crossref" if ext_src == "crossref" else "Semantic Scholar"
 
-            if result["doi_verified"] and not any(
-                "mismatch" in i.lower() for i in result["issues"]
-            ):
-                has_only_soft_issues = all(
-                    "No DOI" in i or "cannot independently" in i
-                    for i in result["issues"]
-                )
-                if has_only_soft_issues or not result["issues"]:
-                    result["status"] = self.VERIFIED
-            elif result["ext_verified"] and not any(
-                "mismatch" in i.lower() for i in result["issues"]
-            ):
-                result["status"] = self.EXT_VERIFIED  # reuse constant for ext-verified
-
-            # Downgrade to SUSPICIOUS if any mismatch found (even with DOI/ext)
-            if any("mismatch" in i.lower() for i in result["issues"]):
-                result["status"] = self.SUSPICIOUS
-
-            if not result["doi_verified"] and not result["url_verified"] and not result["ext_verified"]:
-                if result["issues"]:
-                    result["status"] = self.SUSPICIOUS
-                else:
-                    result["status"] = self.UNVERIFIED
+            result["status"] = self.compute_entry_status(result)
 
             status_display = {
                 self.VERIFIED: "VERIFIED (DOI)",
@@ -979,6 +1269,7 @@ class BibtexCitationVerifier:
         url_verified = [k for k, r in self.results.items() if r["status"] == self.URL_VERIFIED]
         suspicious = [k for k, r in self.results.items() if r["status"] == self.SUSPICIOUS]
         unverified = [k for k, r in self.results.items() if r["status"] == self.UNVERIFIED]
+        self.suspicious_count = len(suspicious)
 
         # Count by source for ext-verified
         cr_count = sum(1 for k in ext_verified
@@ -1085,6 +1376,22 @@ class BibtexCitationVerifier:
 # CLI Entry Point
 # ---------------------------------------------------------------------------
 
+def compute_exit_code(passed: bool, suspicious_count: int) -> int:
+    """
+    Map verification outcome to a process exit code.
+
+    0 = passed and no suspicious entries
+    1 = failed (missing keys; strict-mode suspicious/unverified entries)
+    2 = passed, but suspicious entries present (non-strict mode) — lets the
+        Phase 7 gate detect metadata mismatches without strict mode.
+    """
+    if not passed:
+        return 1
+    if suspicious_count > 0:
+        return 2
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Verify BibTeX citations in a LaTeX manuscript project.",
@@ -1104,8 +1411,13 @@ Checks performed:
     anachronistic terms, missing fields, unverifiable entries)
 
 Exit codes:
-  0 = passed (possibly with warnings)
-  1 = failed (missing keys, suspicious entries in strict mode, etc.)
+  0 = passed, no suspicious entries (possibly with warnings)
+  1 = failed (missing keys, suspicious/unverified entries in strict mode, etc.)
+  2 = passed, but suspicious entries present (non-strict mode)
+
+Environment variables:
+  CROSSREF_MAILTO  contact email for the Crossref polite pool (see --mailto)
+  S2_API_KEY       Semantic Scholar API key (alternative to --s2-key)
 
 Requires only Python 3.10+ stdlib. No external packages needed.
 """,
@@ -1143,7 +1455,22 @@ Requires only Python 3.10+ stdlib. No external packages needed.
         "--s2-key",
         type=str,
         default=None,
-        help="Semantic Scholar API key (optional, relaxes rate limits)",
+        help="Semantic Scholar API key (optional, relaxes rate limits; "
+             "the S2_API_KEY env var is used when this flag is absent)",
+    )
+    parser.add_argument(
+        "--mailto",
+        type=str,
+        default=None,
+        help="Contact email for the Crossref polite pool (also settable via "
+             "the CROSSREF_MAILTO env var; omitted from requests if unset)",
+    )
+    parser.add_argument(
+        "--cache",
+        type=str,
+        default=None,
+        help="Path to an on-disk JSON cache (keyed by DOI / normalized title) "
+             "so re-runs skip already-verified entries",
     )
 
     args = parser.parse_args()
@@ -1160,17 +1487,20 @@ Requires only Python 3.10+ stdlib. No external packages needed.
 
     output_path = Path(args.output) if args.output else None
 
+    set_mailto(args.mailto)
+
     verifier = BibtexCitationVerifier(
         bib_path=bib_path,
         tex_dir=tex_dir,
         strict=args.strict,
         output_path=output_path,
         enable_s2=not args.no_s2,
-        s2_api_key=args.s2_key,
+        s2_api_key=resolve_s2_key(args.s2_key),
+        cache_path=Path(args.cache) if args.cache else None,
     )
 
     passed = verifier.run()
-    sys.exit(0 if passed else 1)
+    sys.exit(compute_exit_code(passed, verifier.suspicious_count))
 
 
 if __name__ == "__main__":

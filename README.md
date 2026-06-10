@@ -27,6 +27,7 @@ When you're stuck, type **`major revision`**. Rev2Agent convenes a discussion pa
 ## What It Does
 
 - Iterates from a vague idea to a manuscript draft through multiple experiment rounds
+- Runs as markdown instructions only -- no framework, no build step; supports both Claude Code and Codex
 - Tracks all research directions in a persistent roadmap -- nothing gets lost between rounds
 - `major revision` convenes host-native reviewers plus external models to debate research decisions
 - External model cross-checks experiment code logic before you spend GPU hours on it
@@ -59,8 +60,8 @@ Each project lives in its own directory with a `.research_state.json` file that 
 ## Prerequisites
 
 - **A supported coding agent host**
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-- Codex
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+  - [Codex CLI](https://help.openai.com/en/articles/11096431-openai-codex-ci-getting-started)
 
 ### Optional enhancements
 
@@ -127,8 +128,9 @@ At phase transitions and result assessments, the agent speaks as Reviewer 2. It 
 ```
 rev2agent/
 ├── AGENTS.md                    # Codex entrypoint
-├── CLAUDE.md                    # Main agent instructions
-├── prompts/
+├── CLAUDE.md                    # Claude Code entrypoint
+├── prompts/                     # Phase prompts (shared across hosts)
+│   ├── conventions.md           # Shared state schema, enums, round rules
 │   ├── 00_setup.md              # Phase 0: Environment setup
 │   ├── 01_interview.md          # Phase 1: Topic interview
 │   ├── 02_literature_search.md  # Phase 2: Literature search
@@ -137,16 +139,19 @@ rev2agent/
 │   ├── 05_experiment_execution.md # Phase 5: Experiment execution
 │   ├── 06_result_analysis.md    # Phase 6: Result analysis
 │   ├── 07_manuscript_writing.md # Phase 7: Manuscript writing
-│   └── 08_manuscript_review.md  # Phase 8: Review panel
+│   ├── 08_manuscript_review.md  # Phase 8: Review panel
+│   └── compaction.md            # New-session-at-phase-boundary guidance
 ├── scripts/                     # Shared validation & analysis scripts
 │   ├── verify_citations_bibtex.py  # BibTeX + Crossref/S2 verification
 │   ├── collect_results.py          # Automated result table generation
 │   ├── source_evaluator.py         # Literature source credibility scoring
 │   └── validate_manuscript.py      # LaTeX cross-ref & placeholder checks
+├── tests/                       # Test suite for the shared scripts
+├── .github/                     # CI workflows
 └── .gitignore
 ```
 
-When you start a research project, the agent creates a project directory with this layout:
+When you start a research project, the agent creates a project directory with this layout. Research projects live as **untracked subfolders** of the repository root -- they are not part of the framework's git history:
 
 ```
 your_project/
@@ -157,6 +162,10 @@ your_project/
 ├── manuscript/                  # LaTeX source, figures, tables
 └── summaries/                   # Phase and round documentation
 ```
+
+### Your research data and git
+
+Project subfolders are git-ignored by default (the `.gitignore` ignores every root-level directory that is not part of the framework), so your research data is never accidentally pushed to a public fork. If you want to version your research, initialize a separate git repository inside your project folder, or maintain your own fork with the ignore rule removed.
 
 ## Changelog
 

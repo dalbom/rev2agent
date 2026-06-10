@@ -36,7 +36,7 @@ import argparse
 import json
 import sys
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
 
@@ -69,11 +69,13 @@ class BatchResult:
 
     sources: List[CredibilityScore]
     statistics: Dict[str, Any]
+    warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "sources": [s.to_dict() for s in self.sources],
             "statistics": self.statistics,
+            "warnings": self.warnings,
         }
 
 
@@ -312,6 +314,7 @@ class SourceEvaluator:
         date: Optional[str] = None,
         author: Optional[str] = None,
         content: Optional[str] = None,
+        publication_date: Optional[str] = None,
     ) -> CredibilityScore:
         """Evaluate a single source and return a CredibilityScore.
 
@@ -327,7 +330,12 @@ class SourceEvaluator:
             Author name(s) or affiliation string.
         content : str or None
             Optional body text for deeper bias analysis.
+        publication_date : str or None
+            Accepted alias for ``date`` (used when ``date`` is not given).
         """
+        if date is None:
+            date = publication_date
+
         domain = self._extract_domain(url)
 
         domain_score = self._score_domain_authority(domain, url)
@@ -363,21 +371,33 @@ class SourceEvaluator:
         """Evaluate a list of sources and compute aggregate statistics.
 
         Each element of *sources* is a dict with keys accepted by
-        ``evaluate_source`` (``url`` is required; others are optional).
+        ``evaluate_source`` (``url`` is required; others are optional;
+        ``publication_date`` is accepted as an alias for ``date``).
+        Sources with a missing or unparseable URL are still scored, but a
+        warning is recorded in the returned ``BatchResult``.
         """
         scores: List[CredibilityScore] = []
-        for src in sources:
+        warnings: List[str] = []
+        for idx, src in enumerate(sources):
+            url = src.get("url", "")
+            if not url or not self._extract_domain(url):
+                title = src.get("title", "")
+                warnings.append(
+                    f"Source {idx} ('{title[:50]}'): missing or unparseable "
+                    f"URL ('{url}') -- domain authority falls back to unknown"
+                )
             score = self.evaluate_source(
-                url=src.get("url", ""),
+                url=url,
                 title=src.get("title", ""),
                 date=src.get("date", None),
                 author=src.get("author", None),
                 content=src.get("content", None),
+                publication_date=src.get("publication_date", None),
             )
             scores.append(score)
 
         statistics = self._compute_statistics(scores)
-        return BatchResult(sources=scores, statistics=statistics)
+        return BatchResult(sources=scores, statistics=statistics, warnings=warnings)
 
     # ------------------------------------------------------------------
     # Domain authority (35 %)
@@ -426,8 +446,9 @@ class SourceEvaluator:
             if bp in domain:
                 return 40.0
 
-        # Fallback -- unknown domain
-        return 55.0
+        # Fallback -- unknown domain (below curated community domains at 55,
+        # above blog platforms at 40)
+        return 45.0
 
     # ------------------------------------------------------------------
     # Recency (20 %)
@@ -595,8 +616,16 @@ class SourceEvaluator:
         return domain
 
     @staticmethod
+    def _to_naive_utc(dt: datetime) -> datetime:
+        """Normalize tz-aware datetimes (ISO offsets from arXiv/Crossref) to
+        naive UTC so they can be subtracted from naive datetime.now()."""
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
+    @staticmethod
     def _parse_date(date_str: str) -> Optional[datetime]:
-        """Try several common date formats and return a datetime or None."""
+        """Try several common date formats; return a naive UTC datetime or None."""
         formats = [
             "%Y-%m-%d",
             "%Y-%m-%dT%H:%M:%S",
@@ -611,12 +640,16 @@ class SourceEvaluator:
         ]
         for fmt in formats:
             try:
-                return datetime.strptime(date_str.strip(), fmt)
+                return SourceEvaluator._to_naive_utc(
+                    datetime.strptime(date_str.strip(), fmt)
+                )
             except ValueError:
                 continue
         # Last resort: try fromisoformat (Python 3.7+)
         try:
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return SourceEvaluator._to_naive_utc(
+                datetime.fromisoformat(date_str.strip().replace("Z", "+00:00"))
+            )
         except Exception:
             return None
 

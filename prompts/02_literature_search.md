@@ -11,9 +11,16 @@ Search the literature broadly, identify promising research gaps, and narrow down
 
 ## Agent Structure
 
-Spawn 4 independent Agent subagents, each working independently and writing its findings to a file. No inter-agent messaging is needed — the lead reads all output files after agents complete.
+Spawn 4 independent subagents in **two waves**, each working independently and writing its findings to a file. No inter-agent messaging is needed — the lead reads all output files after agents complete.
+
+- **Wave 1 (parallel):** survey-agent, frontier-agent, baseline-agent.
+- **Wave 2 (after wave 1 completes):** gap-agent, spawned with the wave-1 output file paths as input — it cross-references their findings, so it cannot run in parallel with them.
 
 ### Agent Roles
+
+In file names below, `{role}` is the agent name without the `-agent` suffix: `survey`, `frontier`, `gap`, `baseline`. **Every agent** writes, in addition to its `.md` deliverable:
+- `{project_dir}/literature/sources_{role}.json` — every collected source, as a JSON list of objects `{"url": ..., "title": ..., "date": ..., "author": ...}` (`date` in ISO 8601, or `null` if unknown; `author` may be `null`).
+- `{project_dir}/literature/refs_{role}.bib` — that agent's verified BibTeX entries (see Reference Accuracy below). Agents never write to a shared `.bib` file.
 
 1. **survey-agent**
    - Role: Find the most recent and highly-cited survey papers on the broad topic.
@@ -27,9 +34,10 @@ Spawn 4 independent Agent subagents, each working independently and writing its 
    - Deliverable: List of 10-15 recent papers with their contributions and stated future work/limitations.
    - Output file: `{project_dir}/literature/frontier-agent.md`
 
-3. **gap-agent**
+3. **gap-agent** (wave 2 — spawned only after wave 1 completes)
    - Role: Identify research gaps, underexplored combinations, and future work directions.
-   - Action: Cross-reference findings from survey-agent and frontier-agent. Look for:
+   - Input: the wave-1 output files (`survey-agent.md`, `frontier-agent.md`, `baseline-agent.md`) — pass their paths in the spawn prompt.
+   - Action: Cross-reference the wave-1 findings. Look for:
      - Future work sections that haven't been addressed yet.
      - Combinations of methods/datasets that haven't been tried.
      - Contradictory findings between papers.
@@ -45,7 +53,7 @@ Spawn 4 independent Agent subagents, each working independently and writing its 
 
 ### Coordination
 
-The lead spawns all 4 agents in parallel. After all agents complete, the lead reads their output files and synthesizes findings.
+The lead spawns wave 1 (survey-agent, frontier-agent, baseline-agent) in parallel. When all three have completed, the lead spawns gap-agent (wave 2) with the wave-1 output file paths as input. After gap-agent completes, the lead reads all output files and synthesizes findings.
 
 ## Spawn Prompts
 
@@ -63,14 +71,21 @@ PROJECT CONTEXT:
 YOUR ROLE: {role description}
 YOUR TASK: {specific task description}
 DELIVERABLE: {what to produce}
-OUTPUT: Write your findings to {project_dir}/literature/{your-role-name}.md
+OUTPUT:
+- Write your findings to {project_dir}/literature/{your-role-name}.md
+- Write every source you collected to {project_dir}/literature/sources_{role}.json
+  (JSON list of {"url": ..., "title": ..., "date": ..., "author": ...}; date ISO 8601 or null)
+- Write your verified BibTeX entries to {project_dir}/literature/refs_{role}.bib
+  (do NOT write to collected_references.bib — the lead merges that file)
 ```
+
+For gap-agent (wave 2), additionally include the wave-1 output file paths in the spawn prompt as INPUT.
 
 ## Search Strategy
 
 ### Deep Research Integration
 
-**Before launching the agents**, if the `research-deep-dive` skill is available, use it on the broad topic to conduct a comprehensive multi-source literature analysis. Otherwise, use WebSearch to manually research the area with multiple parallel queries. Either approach provides:
+**Before launching the agents**, if the `research-deep-dive` skill is available, use it on the broad topic to conduct a comprehensive multi-source literature analysis. Otherwise, use web search to manually research the area with multiple parallel queries. Either approach provides:
 - 10+ verified sources with citation tracking
 - Comparison of competing approaches
 - Identification of research gaps and trends
@@ -80,7 +95,7 @@ Use the research output as the **seed knowledge base** for the agents. Share the
 
 ### Parallel Search Protocol
 
-Each agent should execute multiple searches concurrently for maximum coverage. Launch 5-10 independent searches in a single message using the WebSearch tool.
+Each agent should execute multiple searches concurrently for maximum coverage. Launch 5-10 independent searches in a single message using the host's web search tool.
 
 **Query decomposition — break the research topic into orthogonal search angles:**
 
@@ -97,33 +112,29 @@ Each agent should execute multiple searches concurrently for maximum coverage. L
 
 ```
 [Launch ALL of these simultaneously]
-WebSearch(query="survey {topic} 2024 2025")
-WebSearch(query="site:arxiv.org {topic} {specific_method} 2025")
-WebSearch(query="{topic} limitations challenges failure")
-WebSearch(query="{topic} benchmark SOTA leaderboard")
-WebSearch(query="{topic} {alternative_approach} comparison")
-WebSearch(query="CVPR NeurIPS ICLR 2025 {topic}")
+web_search("survey {topic} 2024 2025")
+web_search("site:arxiv.org {topic} {specific_method} 2025")
+web_search("{topic} limitations challenges failure")
+web_search("{topic} benchmark SOTA leaderboard")
+web_search("{topic} {alternative_approach} comparison")
+web_search("CVPR NeurIPS ICLR 2025 {topic}")
 ```
 
-**After initial searches, spawn deep-dive agents in parallel:**
-
-```
-Task(description="Survey paper analysis", prompt="Read and summarize top survey papers on {topic}")
-Task(description="Recent frontier papers", prompt="Analyze latest papers from 2024-2025 on {topic}")
-Task(description="Baseline collection", prompt="Collect SOTA results and baselines for {datasets}")
-```
+Deep-dive analysis of the found papers is handled by the four role agents specified in **Agent Structure** above — do NOT spawn a separate, additional set of deep-dive agents.
 
 ### First Finish Search (FFS) Quality Gates
 
 Proceed to the next step when FIRST threshold is reached:
 
-| Mode | Sources Required | Min Credibility | Time Limit |
-|------|-----------------|-----------------|------------|
-| Quick | 10+ sources | Avg >60/100 | 5 min |
-| Standard | 15+ sources | Avg >60/100 | 10 min |
-| Deep | 25+ sources | Avg >70/100 | 20 min |
+| Mode | Sources Required | Min Credibility | Effort Cap (per agent) |
+|------|-----------------|-----------------|------------------------|
+| Quick | 10+ sources | Avg >60/100 | max 8 search queries, max 15 sources |
+| Standard | 15+ sources | Avg >60/100 | max 15 search queries, max 25 sources |
+| Deep | 25+ sources | Avg >70/100 | max 25 search queries, max 40 sources |
 
-Continue remaining searches in background — additional sources strengthen Phase 4 (Synthesis & Decision).
+**Mode selection:** Default is **Standard**. Use **Deep** when the target venue is top-tier (e.g., CVPR, NeurIPS, ICML) or the user requests exhaustive coverage. Use **Quick** only when the user explicitly asks for a fast pass. The lead picks the mode before spawning agents and states it in each spawn prompt.
+
+The effort cap is the hard stop: an agent that hits its query or source cap stops searching and writes up what it has, even if the source threshold is not met (note the shortfall in its output file). Additional sources found while finishing in-flight searches strengthen the Synthesis & Decision step below.
 
 ### Source Credibility Scoring
 
@@ -132,7 +143,7 @@ Score every source using the credibility evaluator (`scripts/source_evaluator.py
 ```python
 from scripts.source_evaluator import SourceEvaluator
 evaluator = SourceEvaluator()
-score = evaluator.evaluate_source(url=url, title=title, publication_date=date, author=author)
+score = evaluator.evaluate_source(url=url, title=title, date=date, author=author)
 # score.overall_score: 0-100
 # score.recommendation: "high_trust" / "moderate_trust" / "low_trust" / "verify"
 ```
@@ -167,26 +178,29 @@ For every paper you intend to cite:
 3. If you cannot find a verifiable BibTeX entry, **flag the paper** and note that the citation needs manual verification.
 4. **Never reconstruct** a BibTeX entry from memory. Even if you're confident, look it up.
 
-Save all collected BibTeX entries to `{project_dir}/literature/collected_references.bib` as they are found. This file will be the source of truth for Phase 7 (Manuscript Writing).
+Each agent saves its verified BibTeX entries to its own `{project_dir}/literature/refs_{role}.bib` as they are found — agents must NOT write to a shared file, since they run in parallel. During Synthesis & Decision, the lead merges all `refs_{role}.bib` files (deduplicating by BibTeX key and DOI) into `{project_dir}/literature/collected_references.bib`. That merged file is the source of truth for Phase 7 (Manuscript Writing).
 
 ## Synthesis & Decision
 
 After all agents complete and the lead has read their output files, the lead should:
 
-1. **Compile** all future work directions and research gaps.
-2. **Assess source quality**: Run credibility scores on all collected sources.
+1. **Merge agent outputs**:
+   - Merge all `sources_{role}.json` files into `{project_dir}/literature/sources.json`, deduplicating by URL (keep the entry with the most complete metadata).
+   - Merge all `refs_{role}.bib` files into `{project_dir}/literature/collected_references.bib`, deduplicating by BibTeX key and DOI.
+2. **Compile** all future work directions and research gaps.
+3. **Assess source quality**: Run credibility scores on the merged source list.
    ```bash
    python scripts/source_evaluator.py --batch {project_dir}/literature/sources.json --output {project_dir}/literature/credibility_scores.json
    ```
    Discard or flag any findings supported only by low-credibility sources (<40).
-3. **Score** each direction on:
+4. **Score** each direction on:
    - Novelty (1-5): How new is this direction?
    - Feasibility (1-5): Can it be done with available resources?
    - Impact (1-5): How significant would the contribution be?
    - Publishability (1-5): How likely is this to be accepted at the target venue?
    - Evidence strength (1-5): How well-supported by high-credibility sources?
-4. **Rank** directions by total score (now out of 25 instead of 20).
-5. **Recommend** the top 2-3 directions to the user.
+5. **Rank** directions by total score (now out of 25 instead of 20).
+6. **Recommend** the top 2-3 directions to the user.
 
 ## Self-Critique & Gap-Fill Loop
 
@@ -211,13 +225,13 @@ For each iteration (max 2):
    Output: {project_dir}/literature/gap_fill_iter{N}_{topic_slug}.md
    ```
 
-3. **Re-synthesize**: Integrate the new findings into the synthesis. Update direction scores if new sources change the evidence strength.
+3. **Re-synthesize**: Integrate the new findings into the synthesis. The lead appends any new sources and verified BibTeX entries from the gap-fill outputs to `sources.json` and `collected_references.bib` (deduplicating as in Synthesis & Decision step 1). Update direction scores if new sources change the evidence strength.
 
 4. **Exit conditions** (stop iterating if ANY is true):
    a. All claims in the synthesis have 3+ supporting sources
    b. 2 iterations completed
    c. The gap-fill agents returned no new relevant papers
-   d. FFS time limit has been reached
+   d. The FFS mode's effort cap (search queries / sources) has been reached
 
 Record the number of self-critique iterations performed (0, 1, or 2) in `phase2_literature.md`.
 
@@ -265,7 +279,7 @@ This file must exist before proceeding to Phase 3.
 
 ## State Update
 
-After user confirms direction:
+Field names and enum values follow `prompts/conventions.md`. After user confirms direction:
 - `current_phase`: `3`
 - `sub_step`: `null`
 - `current_round`: `0`
@@ -273,4 +287,4 @@ After user confirms direction:
 - `project_status`: unchanged
 - Populate `topic.specific_topic`, `topic.research_question`
 - Populate `literature.papers_reviewed`, `literature.future_work_ideas`, `literature.selected_direction`
-- Append to `phase_history`
+- Append to `phase_history` (entry format in `prompts/conventions.md`)

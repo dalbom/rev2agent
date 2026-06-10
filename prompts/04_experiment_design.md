@@ -10,6 +10,8 @@ Direct conversation. Present the plan clearly and get explicit user approval.
 
 When `sub_step` is `"refinement"` in the project's `.research_state.json`, this phase operates in **refinement mode**. This adapts the research plan and experiment design based on results or evidence discovered during prior experiment rounds, preventing "locked-in" research when evidence points to different conclusions or uncovers more important angles than initially planned.
 
+**Refinement is an execution mode of Phase 4, not a skip.** Refinement rounds DO execute Phase 4 and DO require `phase4_experiment_design.md` in the round subfolder (see the summary checklist in `prompts/conventions.md`). Only rounds that route directly to Phase 5 with an identical config may skip Phase 4 and its summary file.
+
 **When `sub_step` is `null`, skip this entire section and go straight to the normal design steps below.**
 
 Before proceeding with normal experiment design, first review: the research question, hypothesis, positioning, and whether the overall framing still makes sense given the accumulated evidence.
@@ -70,7 +72,7 @@ IMPACT:
 
 ### After Refinement
 
-Document the adaptation rationale in `{project_dir}/summaries/round[N]_[short_name]/phase4_experiment_design.md`, including what changed and why. Then proceed with the normal experiment design steps below using the refined plan.
+Document the adaptation rationale in `{project_dir}/summaries/round{N}_{short_name}/phase4_experiment_design.md`, including what changed and why. Then proceed with the normal experiment design steps below using the refined plan.
 
 ## Steps
 
@@ -216,7 +218,11 @@ If user has concerns about time/resources, discuss alternatives:
 - Skip certain ablations
 - Use mixed precision training to speed up
 
-**Note on iteration**: This phase may be revisited across multiple rounds. See CLAUDE.md "Research Philosophy: Impact Over Speed" for the iterate-for-impact principle — loop back here whenever Phase 6 or external feedback reveals a better approach, without worrying about cycle count.
+**Note on iteration**: This phase may be revisited across multiple rounds. Impact takes precedence over speed — loop back here whenever Phase 6 or external feedback reveals a better approach, without worrying about cycle count. There are no deadlines driving this work; never dismiss an improvement just because it requires re-running experiments.
+
+## Round Naming
+
+When the design is confirmed, Phase 4 assigns the round's `short_name` — 1-3 words in snake_case describing the round (e.g., `baseline`, `ablation_depth`). Naming rules are in `prompts/conventions.md` "Round Numbering". (For identical-config rounds that skip Phase 4 entirely, Phase 6 assigns the `short_name` during round planning instead.)
 
 ## Phase Summary
 
