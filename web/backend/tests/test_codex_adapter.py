@@ -9,7 +9,9 @@ from app.codex_adapter import (
     CodexSdkAdapter,
     FakeCodexAdapter,
     TurnResultData,
+    _extract_summary,
     get_sdk_status,
+    notification_is_delta,
     summarize_notification,
 )
 
@@ -102,6 +104,138 @@ def test_notification_summary_prefers_agent_message_text() -> None:
         root = Root()
 
     assert summarize_notification(Notification()) == "Here is the final answer."
+
+
+def test_extract_summary_returns_delta_unstripped_with_delta_source() -> None:
+    class Notification:
+        method = "codex/event/agent_message"
+        delta = " chunk with spaces "
+
+    summary, source_attr = _extract_summary(Notification())
+
+    assert summary == " chunk with spaces "
+    assert source_attr == "delta"
+    assert summarize_notification(Notification()) == " chunk with spaces "
+    assert notification_is_delta(Notification()) is True
+
+
+def test_extract_summary_keeps_whitespace_only_delta() -> None:
+    class Notification:
+        method = "codex/event/agent_message"
+        delta = " "
+
+    summary, source_attr = _extract_summary(Notification())
+
+    assert summary == " "
+    assert source_attr == "delta"
+    assert notification_is_delta(Notification()) is True
+
+
+def test_extract_summary_strips_non_delta_attributes() -> None:
+    class Notification:
+        method = "item/completed"
+        message = "  Final answer.  "
+        delta = " ignored because message wins "
+
+    summary, source_attr = _extract_summary(Notification())
+
+    assert summary == "Final answer."
+    assert source_attr == "message"
+    assert notification_is_delta(Notification()) is False
+
+
+def test_extract_summary_returns_no_source_when_nothing_matches() -> None:
+    class Notification:
+        method = "turn/started"
+
+    summary, source_attr = _extract_summary(Notification())
+
+    assert summary == ""
+    assert source_attr is None
+    assert summarize_notification(Notification()) == "turn/started"
+    assert notification_is_delta(Notification()) is False
+
+
+@pytest.mark.asyncio
+async def test_real_adapter_tags_delta_notifications_in_event_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeSandbox:
+        read_only = "read_only"
+        workspace_write = "workspace_write"
+        full_access = "full_access"
+
+    class DeltaNotification:
+        method = "codex/event/agent_message"
+        delta = " streamed chunk "
+
+        def model_dump(self, mode: str = "json") -> dict[str, str]:
+            return {"delta": self.delta}
+
+    class AlreadyTaggedDeltaNotification:
+        method = "codex/event/agent_message_delta"
+        delta = "next"
+
+        def model_dump(self, mode: str = "json") -> dict[str, str]:
+            return {"delta": self.delta}
+
+    class MessageNotification:
+        method = "item/completed"
+        message = "Final answer."
+
+        def model_dump(self, mode: str = "json") -> dict[str, str]:
+            return {"message": self.message}
+
+    class FakeHandle:
+        id = "sdk-turn-1"
+
+        async def stream(self):
+            yield DeltaNotification()
+            yield AlreadyTaggedDeltaNotification()
+            yield MessageNotification()
+
+    class FakeThread:
+        id = "sdk-thread-1"
+
+        async def turn(self, prompt: str, *, sandbox: str):
+            return FakeHandle()
+
+    class FakeAsyncCodex:
+        def __init__(self) -> None:
+            self.thread = FakeThread()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _tb) -> None:
+            await self.close()
+
+        async def close(self) -> None:
+            pass
+
+        async def thread_start(self, *, cwd: str, sandbox: str):
+            return self.thread
+
+    monkeypatch.setattr(
+        "app.codex_adapter.load_sdk_classes",
+        lambda: (FakeAsyncCodex, FakeSandbox),
+    )
+    adapter = CodexSdkAdapter()
+
+    thread = await adapter.start_thread(project_dir="demo", phase=1, sandbox="workspace_write")
+    stream = [
+        event
+        async for event in adapter.stream_turn(thread.thread_id, "Run phase", sandbox="workspace_write")
+    ]
+
+    assert [event.event_type for event in stream] == [
+        "codex/event/agent_message/delta",
+        "codex/event/agent_message_delta",
+        "item/completed",
+    ]
+    assert [event.summary for event in stream] == [
+        " streamed chunk ",
+        "next",
+        "Final answer.",
+    ]
 
 
 @pytest.mark.asyncio

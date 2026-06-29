@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .artifacts import ArtifactService
 from .codex_adapter import CodexSdkAdapter, get_sdk_status
-from .database import RuntimeStore
-from .phases import PhaseJobService, format_sse_event
+from .database import ProjectBusyError, RuntimeStore
+from .phases import ACTIVE_STATUSES, PhaseJobService, format_sse_event
 from .project_tools import ProjectToolService
 from .projects import archive_project, create_project_draft, discover_projects
 from .projects import load_project_state
@@ -18,17 +20,31 @@ from .settings import build_settings_status
 from .setup import complete_host_only_setup as write_host_only_setup
 from .setup import setup_is_complete
 
+EVENT_STREAM_POLL_SECONDS = 0.5
+
 
 def repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-app = FastAPI(title="Rev2Agent GUI")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Jobs from a previous backend process can no longer be running; mark them
+    # interrupted so the GUI does not show phantom "running" jobs forever.
+    phase_service().recover_orphaned_jobs()
+    yield
+
+
+app = FastAPI(title="Rev2Agent GUI", lifespan=lifespan)
+_runtime_stores: dict[Path, RuntimeStore] = {}
 _phase_services: dict[tuple[Path, Path], PhaseJobService] = {}
 
 
 def runtime_store() -> RuntimeStore:
-    return RuntimeStore(Path(__file__).resolve().parents[1] / ".data" / "rev2agent_gui.sqlite3")
+    db_path = Path(__file__).resolve().parents[1] / ".data" / "rev2agent_gui.sqlite3"
+    if db_path not in _runtime_stores:
+        _runtime_stores[db_path] = RuntimeStore(db_path)
+    return _runtime_stores[db_path]
 
 
 def phase_service() -> PhaseJobService:
@@ -55,11 +71,11 @@ def project_tool_service() -> ProjectToolService:
 class StartPhaseJobRequest(BaseModel):
     action: str
     prompt: str
-    approved: bool = False
 
 
 class CreateProjectRequest(BaseModel):
     research_idea: str = ""
+    project_name: str = ""
 
 
 class ContinueJobRequest(BaseModel):
@@ -80,7 +96,7 @@ def ensure_phase_zero_setup(root: Path) -> None:
 
 
 def ensure_project_phase_action(root: Path, project_dir: str, phase: int, action: str) -> None:
-    state = load_project_state(root, root / project_dir)
+    state = _load_project_state_or_http_error(root, project_dir)
     current_phase = _phase_number(state.get("current_phase"))
     if current_phase is None:
         raise HTTPException(
@@ -96,17 +112,14 @@ def ensure_project_phase_action(root: Path, project_dir: str, phase: int, action
 
 
 def ensure_continue_action_allowed(root: Path, job_id: str, action: str) -> None:
-    try:
-        job = runtime_store().get_job(job_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}") from exc
+    job = _get_job_or_404(job_id)
 
     job_phase = _phase_number(job.get("phase"))
     if job_phase is None:
         raise HTTPException(status_code=409, detail="Job phase is unknown; refusing to continue.")
 
     project_dir = str(job.get("project_dir") or "")
-    state = load_project_state(root, root / project_dir)
+    state = _load_project_state_or_http_error(root, project_dir)
     current_phase = _phase_number(state.get("current_phase"))
     if current_phase != job_phase:
         raise HTTPException(
@@ -141,6 +154,22 @@ def _phase_number(value: Any) -> int | None:
     return None
 
 
+def _load_project_state_or_http_error(root: Path, project_dir: str) -> dict[str, Any]:
+    try:
+        return load_project_state(root, root / project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _get_job_or_404(job_id: str) -> dict[str, Any]:
+    try:
+        return runtime_store().get_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}") from exc
+
+
 @app.get("/api/projects")
 def list_projects():
     return discover_projects(repository_root())
@@ -150,7 +179,14 @@ def list_projects():
 def create_project(request: CreateProjectRequest | None = None):
     root = repository_root()
     ensure_phase_zero_setup(root)
-    return create_project_draft(root, research_idea=request.research_idea if request else "")
+    try:
+        return create_project_draft(
+            root,
+            research_idea=request.research_idea if request else "",
+            project_name=request.project_name if request else "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/projects/{project_dir}/archive")
@@ -167,12 +203,17 @@ def archive_project_endpoint(project_dir: str):
 
 @app.get("/api/projects/{project_dir}/state")
 def get_project_state(project_dir: str) -> dict[str, Any]:
-    return load_project_state(repository_root(), repository_root() / project_dir)
+    return _load_project_state_or_http_error(repository_root(), project_dir)
 
 
 @app.get("/api/projects/{project_dir}/phase")
 def get_phase_status(project_dir: str) -> dict[str, Any]:
-    return phase_service().phase_status(project_dir)
+    try:
+        return phase_service().phase_status(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/projects/{project_dir}/phase/{phase}/jobs")
@@ -180,38 +221,91 @@ async def start_phase_job(project_dir: str, phase: int, request: StartPhaseJobRe
     root = repository_root()
     ensure_phase_zero_setup(root)
     ensure_project_phase_action(root, project_dir, phase, request.action)
-    return await phase_service().start_phase_job(
-        project_dir=project_dir,
-        phase=phase,
-        action=request.action,
-        prompt=request.prompt,
-        approved=request.approved,
-    )
+    try:
+        return phase_service().launch_phase_job(
+            project_dir=project_dir,
+            phase=phase,
+            action=request.action,
+            prompt=request.prompt,
+        )
+    except ProjectBusyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Another job ({exc.active_job_id}) is already active for this project; "
+                "stop it or wait for it to finish."
+            ),
+        ) from exc
+
+
+@app.get("/api/projects/{project_dir}/jobs")
+def list_project_jobs(project_dir: str, active: bool = False):
+    return runtime_store().list_project_jobs(project_dir, active_only=active)
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    return _get_job_or_404(job_id)
 
 
 @app.get("/api/jobs/{job_id}/events")
 def get_job_events(job_id: str):
+    _get_job_or_404(job_id)
     return runtime_store().list_events(job_id)
 
 
 @app.get("/api/jobs/{job_id}/events/stream")
-def stream_job_events(job_id: str):
-    def generate():
-        for event in runtime_store().list_events(job_id):
-            yield format_sse_event(event)
+async def stream_job_events(job_id: str, request: Request):
+    store = runtime_store()
+    _get_job_or_404(job_id)
+    last_event_id = _phase_number(request.headers.get("last-event-id")) or 0
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    async def generate():
+        cursor = last_event_id
+        while True:
+            for event in store.list_events_after(job_id, cursor):
+                cursor = event["event_id"]
+                yield format_sse_event(event)
+            try:
+                job = store.get_job(job_id)
+            except KeyError:
+                return
+            if job["status"] not in ACTIVE_STATUSES:
+                # Finalization can write tail events (completion_warning,
+                # interrupt_note, error) between the drain above and this status
+                # check; drain once more so they are not dropped at close.
+                for event in store.list_events_after(job_id, cursor):
+                    cursor = event["event_id"]
+                    yield format_sse_event(event)
+                yield format_sse_event(
+                    {"event_type": "job_status", "job_id": job_id, "status": job["status"]}
+                )
+                return
+            if await request.is_disconnected():
+                return
+            await asyncio.sleep(EVENT_STREAM_POLL_SECONDS)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.post("/api/jobs/{job_id}/interrupt")
 async def interrupt_job(job_id: str):
+    _get_job_or_404(job_id)
     interrupted = await phase_service().interrupt_job(job_id)
     return {"job_id": job_id, "interrupted": interrupted}
 
 
 @app.post("/api/jobs/{job_id}/approval")
 def submit_approval(job_id: str, request: ApprovalRequest):
-    return phase_service().submit_approval(job_id, user_action=request.user_action)
+    _get_job_or_404(job_id)
+    try:
+        return phase_service().submit_approval(job_id, user_action=request.user_action)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/jobs/{job_id}/continue")
@@ -219,31 +313,64 @@ async def continue_job(job_id: str, request: ContinueJobRequest):
     root = repository_root()
     ensure_phase_zero_setup(root)
     ensure_continue_action_allowed(root, job_id, request.action)
-    return await phase_service().continue_job(
-        job_id,
-        action=request.action,
-        prompt=request.prompt,
-    )
+    try:
+        return phase_service().launch_continue_job(
+            job_id,
+            action=request.action,
+            prompt=request.prompt,
+        )
+    except ProjectBusyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Another job ({exc.active_job_id}) is already active for this project; "
+                "stop it or wait for it to finish."
+            ),
+        ) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/projects/{project_dir}/artifacts")
 def list_artifacts(project_dir: str):
-    return artifact_service().index_project(project_dir)
+    try:
+        return artifact_service().index_project(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown project: {project_dir}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/projects/{project_dir}/artifacts/{artifact_id}")
 def read_artifact(project_dir: str, artifact_id: int):
-    return artifact_service().read_artifact(project_dir, artifact_id)
+    try:
+        return artifact_service().read_artifact(project_dir, artifact_id)
+    except (FileNotFoundError, KeyError) as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown artifact: {artifact_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/projects/{project_dir}/collect-results")
 def collect_results(project_dir: str):
-    return project_tool_service().collect_results(project_dir)
+    try:
+        return project_tool_service().collect_results(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/projects/{project_dir}/validate-manuscript")
 def validate_manuscript(project_dir: str):
-    return project_tool_service().validate_manuscript(project_dir)
+    try:
+        return project_tool_service().validate_manuscript(project_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/settings")

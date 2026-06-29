@@ -194,3 +194,113 @@ def test_create_project_draft_uses_new_draft_when_old_draft_was_finalized(tmp_pa
     state = json.loads((tmp_path / "_new_project_draft_2" / ".research_state.json").read_text(encoding="utf-8"))
     assert state["project_dir"] == "_new_project_draft_2"
     assert state["topic"]["specific_topic"] == "second project"
+
+
+def test_create_project_draft_does_not_reuse_draft_that_carries_a_research_idea(tmp_path: Path) -> None:
+    first = create_project_draft(tmp_path, research_idea="original idea")
+
+    second = create_project_draft(tmp_path, research_idea="different idea")
+
+    assert first.project_dir == "_new_project_draft"
+    assert second.project_dir == "_new_project_draft_2"
+    first_state = json.loads(
+        (tmp_path / "_new_project_draft" / ".research_state.json").read_text(encoding="utf-8")
+    )
+    assert first_state["topic"]["specific_topic"] == "original idea"
+
+
+def test_create_project_draft_does_not_reuse_draft_with_phase_history(tmp_path: Path) -> None:
+    create_project_draft(tmp_path)
+    state_path = tmp_path / "_new_project_draft" / ".research_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["phase_history"] = [{"phase": 1, "timestamp": "2026-06-11T10:00:00Z"}]
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    draft = create_project_draft(tmp_path)
+
+    assert draft.project_dir == "_new_project_draft_2"
+
+
+def test_create_project_draft_reuses_pristine_draft_and_records_new_idea(tmp_path: Path) -> None:
+    first = create_project_draft(tmp_path)
+
+    second = create_project_draft(tmp_path, research_idea="late-arriving idea")
+
+    assert second.project_dir == first.project_dir == "_new_project_draft"
+    state = json.loads(
+        (tmp_path / "_new_project_draft" / ".research_state.json").read_text(encoding="utf-8")
+    )
+    assert state["topic"]["specific_topic"] == "late-arriving idea"
+
+
+def test_create_project_with_name_creates_fresh_named_project(tmp_path: Path) -> None:
+    project = create_project_draft(
+        tmp_path,
+        research_idea="Closed-loop synthetic data",
+        project_name="synthetic_data-v2",
+    )
+    state = json.loads(
+        (tmp_path / "synthetic_data-v2" / ".research_state.json").read_text(encoding="utf-8")
+    )
+
+    assert project.project_dir == "synthetic_data-v2"
+    assert project.phase == 1
+    assert project.topic == "Closed-loop synthetic data"
+    assert state["project_dir"] == "synthetic_data-v2"
+    assert state["current_phase"] == 1
+    assert state["phase_status"] == "in_progress"
+    assert state["topic"]["specific_topic"] == "Closed-loop synthetic data"
+    assert state["phase_history"] == []
+    assert not (tmp_path / "_new_project_draft").exists()
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "-starts-with-dash",
+        "_starts_with_underscore",
+        "has space",
+        "has/slash",
+        "..",
+        "a" * 65,
+    ],
+)
+def test_create_project_with_invalid_name_raises_value_error(tmp_path: Path, bad_name: str) -> None:
+    with pytest.raises(ValueError, match="Project name must start with a letter or digit"):
+        create_project_draft(tmp_path, project_name=bad_name)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("reserved_name", ["CON", "con", "Nul", "prn", "AUX", "COM1", "com9", "LPT1", "lpt9"])
+def test_create_project_with_windows_reserved_name_raises_value_error(
+    tmp_path: Path, reserved_name: str
+) -> None:
+    with pytest.raises(ValueError, match="Project name must start with a letter or digit"):
+        create_project_draft(tmp_path, project_name=reserved_name)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_create_project_wraps_mkdir_failure_in_value_error(tmp_path: Path, monkeypatch) -> None:
+    def failing_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "mkdir", failing_mkdir)
+
+    with pytest.raises(ValueError, match="Could not create project folder 'ok_name'"):
+        create_project_draft(tmp_path, project_name="ok_name")
+
+
+def test_create_project_with_name_rejects_existing_directory(tmp_path: Path) -> None:
+    (tmp_path / "taken").mkdir()
+
+    with pytest.raises(ValueError, match="A folder named 'taken' already exists"):
+        create_project_draft(tmp_path, project_name="taken")
+
+
+def test_create_project_with_name_rejects_existing_file(tmp_path: Path) -> None:
+    (tmp_path / "taken").write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="A folder named 'taken' already exists"):
+        create_project_draft(tmp_path, project_name="taken")

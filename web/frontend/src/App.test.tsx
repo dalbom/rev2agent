@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,22 +8,28 @@ class FakeEventSource {
   static instances: FakeEventSource[] = [];
 
   url: string;
-  listeners = new Map<string, (event: MessageEvent) => void>();
+  onmessage: ((event: MessageEvent) => void) | null = null;
 
   constructor(url: string) {
     this.url = url;
     FakeEventSource.instances.push(this);
   }
 
-  addEventListener(eventName: string, callback: (event: MessageEvent) => void) {
-    this.listeners.set(eventName, callback);
-  }
-
   close = vi.fn();
 
-  emit(eventName: string, data: unknown) {
-    this.listeners.get(eventName)?.({ data: JSON.stringify(data) } as MessageEvent);
+  emit(data: unknown) {
+    const payload = data === undefined ? undefined : JSON.stringify(data);
+    this.onmessage?.({ data: payload } as unknown as MessageEvent);
   }
+}
+
+function expectedLocalTimestamp(isoTimestamp: string) {
+  // Same Date math the app uses, so the expectation is timezone-independent.
+  const date = new Date(isoTimestamp);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(
+    date.getMinutes()
+  )}`;
 }
 
 const projectsResponse = {
@@ -145,6 +151,7 @@ const missingTectonicSettingsResponse = {
 describe("App", () => {
   beforeEach(() => {
     FakeEventSource.instances = [];
+    window.sessionStorage.clear();
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal(
       "fetch",
@@ -166,6 +173,18 @@ describe("App", () => {
             })
           };
         }
+        if (String(input).includes("/jobs?active=")) {
+          return {
+            ok: true,
+            json: async () => []
+          };
+        }
+        if (/\/api\/jobs\/[^/]+\/events$/.test(String(input))) {
+          return {
+            ok: true,
+            json: async () => []
+          };
+        }
         if (String(input) === "/api/settings") {
           return {
             ok: true,
@@ -176,6 +195,17 @@ describe("App", () => {
           return {
             ok: true,
             json: async () => settingsResponse
+          };
+        }
+        if (String(input).includes("/phase/1/jobs")) {
+          return {
+            ok: true,
+            json: async () => ({
+              job_id: "job-phase1",
+              requires_approval: false,
+              status: "running",
+              sandbox: "workspace_write"
+            })
           };
         }
         if (String(input).includes("/phase/4/jobs")) {
@@ -197,7 +227,7 @@ describe("App", () => {
             json: async () => ({
               job_id: "job-1",
               requires_approval: false,
-              status: "completed",
+              status: "running",
               sandbox: "workspace_write"
             })
           };
@@ -221,7 +251,7 @@ describe("App", () => {
             json: async () => ({
               job_id: "job-phase5",
               requires_approval: false,
-              status: "completed",
+              status: "running",
               sandbox: "workspace_write"
             })
           };
@@ -535,9 +565,31 @@ describe("App", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
 
-    expect(screen.getByRole("heading", { name: "Design Experiments" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /run next step/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /view files/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Synthetic Segmentation", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Design Experiments", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Step Details" })).not.toBeInTheDocument();
+    expect(screen.queryByText("SYNTHETIC_SEGMENTATION")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /run next step/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /run experiment scripts/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /view files/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the console above the prompt and the latest artifact beside the step controls", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+
+    const phasePanel = screen.getByRole("region", { name: /current step/i });
+    expect(within(phasePanel).getByRole("heading", { name: "Live Run Console" })).toBeInTheDocument();
+    expect(within(phasePanel).getByLabelText("Prompt")).toBeInTheDocument();
+    expect(within(phasePanel).getByRole("button", { name: /send/i })).toBeInTheDocument();
+
+    const consoleHeading = within(phasePanel).getByRole("heading", { name: "Live Run Console" });
+    const promptBox = within(phasePanel).getByLabelText("Prompt");
+    expect(consoleHeading.compareDocumentPosition(promptBox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    expect(screen.getByRole("region", { name: /latest artifact preview/i })).toBeInTheDocument();
   });
 
   it("shows the latest artifact preview on the phase dashboard and links to files", async () => {
@@ -546,6 +598,9 @@ describe("App", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         if (String(input) === "/api/settings") {
           return { ok: true, json: async () => settingsResponse };
+        }
+        if (String(input).includes("/jobs?active=")) {
+          return { ok: true, json: async () => [] };
         }
         if (String(input).endsWith("/artifacts/9")) {
           return {
@@ -602,17 +657,23 @@ describe("App", () => {
   it("formats project update timestamps for display", async () => {
     render(<App />);
 
-    expect(await screen.findByText("2026-06-02 10:00:00")).toBeInTheDocument();
+    expect(await screen.findByText(expectedLocalTimestamp("2026-06-02T10:00:00Z"))).toBeInTheDocument();
     expect(screen.queryByText("2026-06-02T10:00:00Z")).not.toBeInTheDocument();
   });
 
   it("shows Phase 7 choices when tectonic is missing", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => ({
-        ok: true,
-        json: async () => (String(input) === "/api/settings" ? missingTectonicSettingsResponse : phaseSevenProjectsResponse)
-      }))
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("/jobs?active=")) {
+          return { ok: true, json: async () => [] };
+        }
+        return {
+          ok: true,
+          json: async () =>
+            String(input) === "/api/settings" ? missingTectonicSettingsResponse : phaseSevenProjectsResponse
+        };
+      })
     );
 
     render(<App />);
@@ -641,6 +702,9 @@ describe("App", () => {
             json: async () => (settingsChecks === 1 ? missingTectonicSettingsResponse : settingsResponse)
           };
         }
+        if (String(input).includes("/jobs?active=")) {
+          return { ok: true, json: async () => [] };
+        }
         return {
           ok: true,
           json: async () => phaseSevenProjectsResponse
@@ -656,7 +720,7 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /refresh checks/i }));
 
-    await screen.findByRole("button", { name: /run next step/i });
+    await screen.findByRole("button", { name: /send/i });
     expect(screen.queryByText("tectonic found at C:/tools/tectonic.exe")).not.toBeInTheDocument();
     expect(screen.queryByText("PDF compiler missing")).not.toBeInTheDocument();
   });
@@ -668,6 +732,9 @@ describe("App", () => {
           ok: true,
           json: async () => missingTectonicSettingsResponse
         };
+      }
+      if (String(input).includes("/jobs?active=")) {
+        return { ok: true, json: async () => [] };
       }
       if (String(input).includes("/phase/7/jobs")) {
         return {
@@ -692,7 +759,7 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /open manuscript_project/i }));
     await userEvent.click(await screen.findByRole("button", { name: /skip pdf compile/i }));
 
-    expect(await screen.findByText("Job job-phase7-skip-pdf completed")).toBeInTheDocument();
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
 
     const phaseRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/phase/7/jobs"));
     const requestBody = JSON.parse(String(phaseRequest?.[1]?.body ?? "{}"));
@@ -708,6 +775,7 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /start new project/i }));
 
     expect(await screen.findByLabelText("Research idea")).toBeInTheDocument();
+    expect(screen.getByLabelText("Project folder name (optional)")).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalledWith("/api/projects", expect.objectContaining({ method: "POST" }));
 
     await userEvent.click(screen.getByRole("button", { name: /create project/i }));
@@ -719,16 +787,37 @@ describe("App", () => {
     await userEvent.type(screen.getByLabelText("Research idea"), idea);
     await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
-    expect(await screen.findByRole("heading", { name: "Choose Topic" })).toBeInTheDocument();
-    expect(screen.getByText("_new_project_draft")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "New Project Draft", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Choose Topic", level: 2 })).toBeInTheDocument();
+    expect(screen.queryByText("_new_project_draft")).not.toBeInTheDocument();
     expect(screen.getByText(idea)).toBeInTheDocument();
+    expect(await screen.findByText("Rev2Agent is working now.")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/projects",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ research_idea: idea })
+        body: JSON.stringify({ research_idea: idea, project_name: "" })
       })
     );
+  });
+
+  it("auto-starts Phase 1 after project creation using the research idea", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const idea = "Road surface understanding from camera, LiDAR, and vehicle signals.";
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /start new project/i }));
+    await userEvent.type(screen.getByLabelText("Research idea"), idea);
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
+
+    expect(await screen.findByText("Rev2Agent is working now.")).toBeInTheDocument();
+    expect(await screen.findByText(`You: Research idea: ${idea}`)).toBeInTheDocument();
+
+    const phaseRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/phase/1/jobs"));
+    const requestBody = JSON.parse(String(phaseRequest?.[1]?.body ?? "{}"));
+    expect(phaseRequest?.[0]).toBe("/api/projects/_new_project_draft/phase/1/jobs");
+    expect(requestBody.prompt).toMatch(/Road surface understanding/i);
   });
 
   it("includes the project topic in the Phase 1 launch prompt", async () => {
@@ -738,6 +827,9 @@ describe("App", () => {
           ok: true,
           json: async () => settingsResponse
         };
+      }
+      if (String(input).includes("/jobs?active=")) {
+        return { ok: true, json: async () => [] };
       }
       if (String(input).includes("/phase/1/jobs")) {
         return {
@@ -760,9 +852,9 @@ describe("App", () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open _new_project_draft/i }));
-    await userEvent.click(screen.getByRole("button", { name: /run next step/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
 
-    expect(await screen.findByText("Job job-phase1 completed")).toBeInTheDocument();
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
 
     const phaseRequest = fetchMock.mock.calls.find(([input]) => String(input).includes("/phase/1/jobs"));
     const requestBody = JSON.parse(String(phaseRequest?.[1]?.body ?? "{}"));
@@ -770,64 +862,340 @@ describe("App", () => {
     expect(requestBody.prompt).toMatch(/Closed-loop synthetic data generation/i);
   });
 
-  it("launches the current phase job from the dashboard", async () => {
+  it("labels the user text box as a prompt", async () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
-    await userEvent.click(screen.getByRole("button", { name: /run next step/i }));
 
-    expect(await screen.findByText("Job job-1 completed")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Prompt")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Phase instruction")).not.toBeInTheDocument();
+  });
+
+  it("launches the current phase job and refreshes projects when it finishes", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(await screen.findByText("Rev2Agent is working now.")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/projects/synthetic_segmentation/phase/4/jobs",
       expect.objectContaining({ method: "POST" })
     );
+
+    const projectListCallsBefore = vi
+      .mocked(fetch)
+      .mock.calls.filter(([input, init]) => String(input) === "/api/projects" && !init?.method).length;
+
+    FakeEventSource.instances.at(-1)?.emit({ event_type: "job_status", job_id: "job-1", status: "completed" });
+
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
+    const projectListCallsAfter = vi
+      .mocked(fetch)
+      .mock.calls.filter(([input, init]) => String(input) === "/api/projects" && !init?.method).length;
+    expect(projectListCallsAfter).toBeGreaterThan(projectListCallsBefore);
   });
 
-  it("disables experiment execution outside Phase 5", async () => {
+  it("shows backend error details when starting a job fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      if (String(input).includes("/jobs?active=")) {
+        return { ok: true, json: async () => [] };
+      }
+      if (String(input).includes("/phase/4/jobs")) {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({ detail: "Current project phase is 5; refusing to run phase 4." })
+        };
+      }
+      return { ok: true, json: async () => projectsResponse };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(
+      await screen.findByText("Failed to start phase job: Current project phase is 5; refusing to run phase 4.")
+    ).toBeInTheDocument();
+  });
+
+  it("removes the dedicated experiment execution button from the step controls", async () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
 
-    expect(screen.getByRole("button", { name: /run experiment scripts/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /run experiment scripts/i })).not.toBeInTheDocument();
   });
 
-  it("renders live SDK job events from the SSE stream", async () => {
+  it("shows only user-facing console messages and skips replayed duplicates", async () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
-    await userEvent.click(screen.getByRole("button", { name: /run next step/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
 
+    await screen.findByText("Rev2Agent is working now.");
     expect(FakeEventSource.instances.at(-1)?.url).toBe("/api/jobs/job-1/events/stream");
 
-    FakeEventSource.instances.at(-1)?.emit("turn_completed", {
+    FakeEventSource.instances.at(-1)?.emit({
+      event_id: 3,
+      event_type: "CommandExecutionStatus.in_progress",
+      summary: "CommandExecutionStatus.in_progress"
+    });
+    FakeEventSource.instances.at(-1)?.emit({
+      event_id: 4,
+      event_type: "thread/tokenUsage/updated",
+      summary: "thread/tokenUsage/updated"
+    });
+    FakeEventSource.instances.at(-1)?.emit({
       event_id: 5,
-      event_type: "turn_completed",
-      summary: "Codex produced the experiment design summary."
+      event_type: "item/agentMessage/delta",
+      summary: "Got"
+    });
+    FakeEventSource.instances.at(-1)?.emit({
+      event_id: 6,
+      event_type: "item/agentMessage/delta",
+      summary: " it"
     });
 
-    expect(await screen.findByText("Codex produced the experiment design summary.")).toBeInTheDocument();
+    const assistantMessage = {
+      event_id: 7,
+      event_type: "item/completed",
+      summary: "Got it: camera + LiDAR + vehicle signals.",
+      raw_payload_json: "AgentMessageThreadItem(id='msg_1')"
+    };
+    FakeEventSource.instances.at(-1)?.emit(assistantMessage);
+    FakeEventSource.instances.at(-1)?.emit(assistantMessage);
+
+    expect(await screen.findAllByText("Got it: camera + LiDAR + vehicle signals.")).toHaveLength(1);
+    expect(screen.queryByText("CommandExecutionStatus.in_progress")).not.toBeInTheDocument();
+    expect(screen.queryByText("thread/tokenUsage/updated")).not.toBeInTheDocument();
+    expect(screen.queryByText("Got it")).not.toBeInTheDocument();
+  });
+
+  it("extracts the next phase question and hides run-process chatter from the console", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    await screen.findByText("Rev2Agent is working now.");
+    FakeEventSource.instances.at(-1)?.emit({
+      event_id: 21,
+      event_type: "item/completed",
+      raw_payload_json: "AgentMessageThreadItem(id='msg_phase1')",
+      summary:
+        "I’ll use the `using-superpowers` skill for session discipline, then I’ll persist this Phase 1 answer before continuing the interview one question at a time.\n\n" +
+        "I found the local Phase 1 prompt and the current state file. I’m going to record the application domain now, then continue with the next Phase 1 question.\n\n" +
+        "The timestamp command used a newer PowerShell flag that is not available here. I’ll use the compatible UTC conversion path and keep the state update straightforward.\n\n" +
+        "Next Phase 1 question: Do you have any specific datasets or benchmarks in mind, or should I identify suitable ones during the literature search?"
+    });
+    FakeEventSource.instances.at(-1)?.emit({
+      event_id: 22,
+      event_type: "completion_warning",
+      summary:
+        "Job completed but the project state did not change (still phase 1, status in_progress). The phase may not have produced its required outputs; review the run log and consider retrying."
+    });
+    FakeEventSource.instances.at(-1)?.emit({
+      event_id: 23,
+      event_type: "assistant_message",
+      summary:
+        "That timestamp command used a PowerShell option not available in this environment. I'll use the older-compatible UTC call and keep going; the failure is harmless but worth recording accurately."
+    });
+    FakeEventSource.instances.at(-1)?.emit({ event_type: "job_status", job_id: "job-1", status: "completed" });
+
+    expect(
+      await screen.findByText(
+        "Next Phase 1 question: Do you have any specific datasets or benchmarks in mind, or should I identify suitable ones during the literature search?"
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/using-superpowers/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/local Phase 1 prompt/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/timestamp command/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/older-compatible UTC call/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Job completed but the project state did not change/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Run finished/i)).not.toBeInTheDocument();
+  });
+
+  it("refreshes the latest artifact preview when a job completes", async () => {
+    let artifactListCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      if (String(input).includes("/jobs?active=")) {
+        return { ok: true, json: async () => [] };
+      }
+      if (String(input) === "/api/jobs/job-1/events") {
+        return { ok: true, json: async () => [] };
+      }
+      if (String(input).includes("/phase/4/jobs")) {
+        return {
+          ok: true,
+          json: async () => ({
+            job_id: "job-1",
+            requires_approval: false,
+            status: "running",
+            sandbox: "workspace_write"
+          })
+        };
+      }
+      if (String(input).endsWith("/artifacts/10")) {
+        return {
+          ok: true,
+          json: async () => ({
+            artifact_id: 10,
+            kind: "text",
+            mime_type: "text/markdown",
+            content: "# Phase 1 Topic\n\nUpdated topic summary.",
+            size_bytes: 39
+          })
+        };
+      }
+      if (String(input).endsWith("/artifacts")) {
+        artifactListCalls += 1;
+        return {
+          ok: true,
+          json: async () =>
+            artifactListCalls === 1
+              ? []
+              : [
+                  {
+                    artifact_id: 10,
+                    artifact_type: "summary",
+                    title: "phase1_topic.md",
+                    path: "synthetic_segmentation/summaries/phase1_topic.md",
+                    validation_status: "valid"
+                  }
+                ]
+        };
+      }
+      return { ok: true, json: async () => projectsResponse };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    expect(await screen.findByText("No artifacts yet.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("Rev2Agent is working now.");
+    FakeEventSource.instances.at(-1)?.emit({ event_type: "job_status", job_id: "job-1", status: "completed" });
+
+    expect(await screen.findByText("phase1_topic.md")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Phase 1 Topic" })).toBeInTheDocument();
+  });
+
+  it("keeps the console transcript across runs until the user clears it", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.type(await screen.findByLabelText("Prompt"), "Use camera and LiDAR.");
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    await screen.findByText("You: Use camera and LiDAR.");
+    const firstSource = FakeEventSource.instances.at(-1);
+    firstSource?.emit({
+      event_id: 11,
+      event_type: "item/completed",
+      summary: "First answer from Rev2Agent.",
+      raw_payload_json: "AgentMessageThreadItem(id='msg_2')"
+    });
+    firstSource?.emit({ event_type: "job_status", job_id: "job-1", status: "completed" });
+
+    expect(await screen.findByText("First answer from Rev2Agent.")).toBeInTheDocument();
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
+    expect(screen.queryByText("Run finished. Rev2Agent is waiting for your next prompt.")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(screen.getByText("You: Use camera and LiDAR.")).toBeInTheDocument();
+    expect(screen.getByText("First answer from Rev2Agent.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /clear/i }));
+
+    expect(screen.queryByText("You: Use camera and LiDAR.")).not.toBeInTheDocument();
+    expect(screen.queryByText("First answer from Rev2Agent.")).not.toBeInTheDocument();
+  });
+
+  it("reloads the saved console transcript when returning to a project", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("Rev2Agent is working now.");
+
+    FakeEventSource.instances.at(-1)?.emit({
+      event_id: 31,
+      event_type: "item/completed",
+      summary: "Next Phase 1 question: Which evaluation metric matters most?",
+      raw_payload_json: "AgentMessageThreadItem(id='msg_saved')"
+    });
+
+    expect(await screen.findByText("Next Phase 1 question: Which evaluation metric matters most?")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Projects" }));
+    expect(await screen.findByRole("heading", { name: "Existing Projects" })).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    expect(await screen.findByText("Next Phase 1 question: Which evaluation metric matters most?")).toBeInTheDocument();
+  });
+
+  it("sends the prompt with Ctrl+Enter from the text box", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.type(await screen.findByLabelText("Prompt"), "Use a tiny dataset smoke test.");
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+
+    expect(await screen.findByText("Rev2Agent is working now.")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/projects/synthetic_segmentation/phase/4/jobs",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          action: "Continue Design Experiments",
+          prompt: "Use a tiny dataset smoke test."
+        })
+      })
+    );
   });
 
   it("keeps the live console mounted when an SSE event has invalid data", async () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
-    await userEvent.click(screen.getByRole("button", { name: /run next step/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
 
-    FakeEventSource.instances.at(-1)?.emit("turn_completed", undefined);
+    await screen.findByText("Rev2Agent is working now.");
+    FakeEventSource.instances.at(-1)?.emit(undefined);
 
     expect(await screen.findByText("A job event could not be displayed.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Live Run Console" })).toBeInTheDocument();
   });
 
-  it("interrupts the active job from the dashboard", async () => {
+  it("interrupts the active job from the dashboard while it is running", async () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
-    await userEvent.click(screen.getByRole("button", { name: /run next step/i }));
-    await userEvent.click(screen.getByRole("button", { name: /stop/i }));
 
-    expect(await screen.findByText("Job job-1 interrupted")).toBeInTheDocument();
+    const stopButton = screen.getByRole("button", { name: /stop/i });
+    expect(stopButton).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("Rev2Agent is working now.");
+    expect(stopButton).toBeEnabled();
+
+    await userEvent.click(stopButton);
+
+    expect(await screen.findByText("Rev2Agent stopped. You can revise the prompt and run the step again.")).toBeInTheDocument();
+    expect(stopButton).toBeDisabled();
     expect(fetch).toHaveBeenCalledWith(
       "/api/jobs/job-1/interrupt",
       expect.objectContaining({ method: "POST" })
@@ -840,6 +1208,9 @@ describe("App", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         if (String(input) === "/api/settings") {
           return { ok: true, json: async () => settingsResponse };
+        }
+        if (String(input).includes("/jobs?active=")) {
+          return { ok: true, json: async () => [] };
         }
         if (String(input).includes("/phase/5/jobs")) {
           return {
@@ -860,7 +1231,7 @@ describe("App", () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open experiment_project/i }));
-    await userEvent.click(screen.getByRole("button", { name: /run experiment scripts/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
 
     expect(await screen.findByRole("dialog", { name: /approval required/i })).toBeInTheDocument();
     expect(screen.getByText("This starts a long-running experiment or training job.")).toBeInTheDocument();
@@ -874,6 +1245,9 @@ describe("App", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         if (String(input) === "/api/settings") {
           return { ok: true, json: async () => settingsResponse };
+        }
+        if (String(input).includes("/jobs?active=")) {
+          return { ok: true, json: async () => [] };
         }
         if (String(input) === "/api/jobs/job-risk/approval") {
           return {
@@ -911,10 +1285,10 @@ describe("App", () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open experiment_project/i }));
-    await userEvent.click(screen.getByRole("button", { name: /run experiment scripts/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
     await userEvent.click(await screen.findByRole("button", { name: /approve high-risk action/i }));
 
-    expect(await screen.findByText("Job job-risk completed")).toBeInTheDocument();
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/jobs/job-risk/approval",
       expect.objectContaining({ method: "POST" })
@@ -931,6 +1305,9 @@ describe("App", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         if (String(input) === "/api/settings") {
           return { ok: true, json: async () => settingsResponse };
+        }
+        if (String(input).includes("/jobs?active=")) {
+          return { ok: true, json: async () => [] };
         }
         if (String(input) === "/api/jobs/job-risk/approval") {
           return {
@@ -969,17 +1346,68 @@ describe("App", () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open experiment_project/i }));
-    await userEvent.type(screen.getByLabelText("Phase instruction"), instruction);
-    await userEvent.click(screen.getByRole("button", { name: /run experiment scripts/i }));
+    await userEvent.type(screen.getByLabelText("Prompt"), instruction);
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
     await userEvent.click(await screen.findByRole("button", { name: /approve high-risk action/i }));
 
-    expect(await screen.findByText("Job job-risk completed")).toBeInTheDocument();
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       "/api/jobs/job-risk/continue",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ action: "Run experiment scripts", prompt: instruction })
+        body: JSON.stringify({ action: "Continue Run Experiments", prompt: instruction })
       })
+    );
+  });
+
+  it("sends the rejection to the backend when the user rejects a high-risk action", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      if (String(input).includes("/jobs?active=")) {
+        return { ok: true, json: async () => [] };
+      }
+      if (String(input) === "/api/jobs/job-risk/approval") {
+        return {
+          ok: true,
+          json: async () => ({ approval_id: 1, user_action: "rejected", final_status: "rejected" })
+        };
+      }
+      if (String(input).includes("/phase/5/jobs")) {
+        return {
+          ok: true,
+          json: async () => ({
+            job_id: "job-risk",
+            requires_approval: true,
+            status: "waiting_for_approval",
+            sandbox: "workspace_write",
+            message: "This starts a long-running experiment or training job."
+          })
+        };
+      }
+      return { ok: true, json: async () => phaseFiveProjectsResponse };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open experiment_project/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /reject/i }));
+
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/jobs/job-risk/approval",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ user_action: "rejected" })
+      })
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/jobs/job-risk/continue",
+      expect.anything()
     );
   });
 
@@ -987,7 +1415,7 @@ describe("App", () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
-    await userEvent.click(screen.getByRole("button", { name: /view files/i }));
+    await userEvent.click(screen.getByRole("button", { name: /open files/i }));
 
     expect(await screen.findByText("phase1_topic.md")).toBeInTheDocument();
     expect(screen.queryByText("metrics.csv")).not.toBeInTheDocument();
@@ -1013,7 +1441,7 @@ describe("App", () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
-    await userEvent.click(screen.getByRole("button", { name: /view files/i }));
+    await userEvent.click(screen.getByRole("button", { name: /open files/i }));
 
     expect(await screen.findByText("phase1_topic.md")).toBeInTheDocument();
     expect(screen.queryByText("metrics.csv")).not.toBeInTheDocument();
@@ -1028,7 +1456,7 @@ describe("App", () => {
     render(<App />);
 
     await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
-    await userEvent.click(screen.getByRole("button", { name: /view files/i }));
+    await userEvent.click(screen.getByRole("button", { name: /open files/i }));
     await userEvent.click(await screen.findByRole("button", { name: /collect results/i }));
 
     expect(await screen.findByText("Result collection passed")).toBeInTheDocument();
@@ -1044,5 +1472,341 @@ describe("App", () => {
       "/api/projects/synthetic_segmentation/validate-manuscript",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("adopts an already-active job when the phase dashboard mounts", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      if (String(input) === "/api/projects/synthetic_segmentation/jobs?active=true") {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              job_id: "job-resumed",
+              project_dir: "synthetic_segmentation",
+              phase: 4,
+              status: "running",
+              approval_state: "none",
+              sandbox: "workspace_write",
+              started_at: "2026-06-11T21:00:00Z",
+              completed_at: null,
+              last_error: null
+            }
+          ]
+        };
+      }
+      if (String(input).endsWith("/artifacts")) {
+        return { ok: true, json: async () => [] };
+      }
+      return { ok: true, json: async () => projectsResponse };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+
+    expect(await screen.findByText("Rev2Agent is working now.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /stop/i })).toBeEnabled();
+    expect(FakeEventSource.instances.at(-1)?.url).toBe("/api/jobs/job-resumed/events/stream");
+  });
+
+  it("issues exactly one job request when Send is double-clicked", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+
+    const runButton = screen.getByRole("button", { name: /send/i });
+    act(() => {
+      runButton.click();
+      runButton.click();
+    });
+
+    expect(await screen.findByText("Rev2Agent is working now.")).toBeInTheDocument();
+
+    const phaseJobPosts = vi
+      .mocked(fetch)
+      .mock.calls.filter(([input, init]) => String(input).includes("/phase/4/jobs") && init?.method === "POST");
+    expect(phaseJobPosts).toHaveLength(1);
+  });
+
+  it("shows the backend detail when manuscript validation fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      if (String(input).includes("/jobs?active=")) {
+        return { ok: true, json: async () => [] };
+      }
+      if (String(input) === "/api/projects/synthetic_segmentation/validate-manuscript") {
+        return {
+          ok: true,
+          json: async () => ({
+            status: "failed",
+            return_code: 1,
+            stderr: "Validation failed:\nmanuscript/main.tex: 2 unresolved references",
+            artifacts: []
+          })
+        };
+      }
+      if (String(input).endsWith("/artifacts")) {
+        return { ok: true, json: async () => [] };
+      }
+      return { ok: true, json: async () => projectsResponse };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /open files/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /validate manuscript/i }));
+
+    expect(
+      await screen.findByText(
+        /Manuscript validation failed: Validation failed: manuscript\/main\.tex: 2 unresolved references/
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("renders project timestamps in local time", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          ...projectsResponse,
+          projects: [{ ...projectsResponse.projects[0], updated_at: "2026-06-11T22:14:26Z" }]
+        })
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByText(expectedLocalTimestamp("2026-06-11T22:14:26Z"))).toBeInTheDocument();
+    expect(screen.queryByText("2026-06-11T22:14:26Z")).not.toBeInTheDocument();
+  });
+
+  it("coalesces token delta events into one row and supersedes them with the full message", async () => {
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("Rev2Agent is working now.");
+
+    const source = FakeEventSource.instances.at(-1);
+    source?.emit({ event_id: 1, event_type: "item/agent_message/delta", summary: "I'" });
+    source?.emit({ event_id: 2, event_type: "item/agent_message/delta", summary: "ll" });
+    source?.emit({ event_id: 3, event_type: "item/agent_message/delta", summary: " resume" });
+
+    expect(await screen.findByText("I'll resume")).toBeInTheDocument();
+    expect(screen.queryByText("I'")).not.toBeInTheDocument();
+    expect(screen.queryByText("ll")).not.toBeInTheDocument();
+
+    source?.emit({
+      event_id: 4,
+      event_type: "assistant_message",
+      summary: "I'll resume the interrupted experiment run."
+    });
+
+    expect(await screen.findByText("I'll resume the interrupted experiment run.")).toBeInTheDocument();
+    expect(screen.queryByText("I'll resume")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/I'll resume/)).toHaveLength(1);
+  });
+
+  it("drains tail events from the events endpoint when the SSE stream closes", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      if (String(input).includes("/jobs?active=")) {
+        return { ok: true, json: async () => [] };
+      }
+      if (String(input) === "/api/jobs/job-1/events") {
+        return {
+          ok: true,
+          json: async () => [
+            { event_id: 41, event_type: "turn_completed", summary: "Turn completed" },
+            {
+              event_id: 42,
+              event_type: "assistant_message",
+              summary: "Next Phase 1 question: Which benchmark should be the primary target?"
+            },
+            {
+              event_id: 43,
+              event_type: "completion_warning",
+              summary: "Job completed but the project state did not change."
+            }
+          ]
+        };
+      }
+      if (String(input).includes("/phase/4/jobs")) {
+        return {
+          ok: true,
+          json: async () => ({
+            job_id: "job-1",
+            requires_approval: false,
+            status: "running",
+            sandbox: "workspace_write"
+          })
+        };
+      }
+      if (String(input).endsWith("/artifacts")) {
+        return { ok: true, json: async () => [] };
+      }
+      return { ok: true, json: async () => projectsResponse };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+    await userEvent.click(screen.getByRole("button", { name: /send/i }));
+    await screen.findByText("Rev2Agent is working now.");
+
+    const source = FakeEventSource.instances.at(-1);
+    source?.emit({ event_id: 41, event_type: "turn_completed", summary: "Turn completed" });
+    source?.emit({ event_type: "job_status", job_id: "job-1", status: "completed" });
+
+    expect(await screen.findByText("Next Phase 1 question: Which benchmark should be the primary target?")).toBeInTheDocument();
+    expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
+    // Internal turn status events are not part of the user-facing transcript.
+    expect(screen.queryByText("Turn completed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Job completed but the project state did not change.")).not.toBeInTheDocument();
+  });
+
+  it("drains tail events when polling notices the job finished after the stream went quiet", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/settings") {
+          return { ok: true, json: async () => settingsResponse };
+        }
+        if (String(input).includes("/jobs?active=")) {
+          return { ok: true, json: async () => [] };
+        }
+        if (String(input) === "/api/jobs/job-1/events") {
+          return {
+            ok: true,
+            json: async () => [
+              {
+                event_id: 6,
+                event_type: "assistant_message",
+                summary: "Next Phase 1 question: Which dataset split should be used?"
+              },
+              {
+                event_id: 7,
+                event_type: "completion_warning",
+                summary: "Job completed but the project state did not change."
+              }
+            ]
+          };
+        }
+        if (String(input) === "/api/jobs/job-1") {
+          return {
+            ok: true,
+            json: async () => ({
+              job_id: "job-1",
+              project_dir: "synthetic_segmentation",
+              phase: 4,
+              status: "completed",
+              approval_state: "not_required",
+              sandbox: "workspace_write",
+              started_at: "2026-06-11T21:00:00Z",
+              completed_at: "2026-06-11T21:05:00Z",
+              last_error: null
+            })
+          };
+        }
+        if (String(input).includes("/phase/4/jobs")) {
+          return {
+            ok: true,
+            json: async () => ({
+              job_id: "job-1",
+              requires_approval: false,
+              status: "running",
+              sandbox: "workspace_write"
+            })
+          };
+        }
+        if (String(input).endsWith("/artifacts")) {
+          return { ok: true, json: async () => [] };
+        }
+        return { ok: true, json: async () => projectsResponse };
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<App />);
+
+      await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+      await userEvent.click(screen.getByRole("button", { name: /send/i }));
+      await screen.findByText("Rev2Agent is working now.");
+
+      // Fire the 5s poll fallback; the SSE stream never reported the close.
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+
+      expect(await screen.findByText("Rev2Agent is waiting for your next prompt.")).toBeInTheDocument();
+      expect(await screen.findByText("Next Phase 1 question: Which dataset split should be used?")).toBeInTheDocument();
+      expect(screen.queryByText("Job completed but the project state did not change.")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("guides the user when a reconciled job is waiting for approval", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/settings") {
+        return { ok: true, json: async () => settingsResponse };
+      }
+      if (String(input) === "/api/projects/synthetic_segmentation/jobs?active=true") {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              job_id: "job-waiting",
+              project_dir: "synthetic_segmentation",
+              phase: 4,
+              status: "waiting_for_approval",
+              approval_state: "required",
+              sandbox: "workspace_write",
+              started_at: "2026-06-11T21:00:00Z",
+              completed_at: null,
+              last_error: null
+            }
+          ]
+        };
+      }
+      if (/\/api\/jobs\/[^/]+\/events$/.test(String(input))) {
+        return { ok: true, json: async () => [] };
+      }
+      if (String(input).endsWith("/artifacts")) {
+        return { ok: true, json: async () => [] };
+      }
+      return { ok: true, json: async () => projectsResponse };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /open synthetic_segmentation/i }));
+
+    expect(
+      await screen.findByText(
+        "Rev2Agent is waiting for approval. Press Stop to clear this waiting job, then run the step again."
+      )
+    ).toBeInTheDocument();
+    // Stop must stay available so the user can clear the stuck job.
+    expect(screen.getByRole("button", { name: /stop/i })).toBeEnabled();
+    // The job is not running, so no elapsed timer is shown.
+    expect(screen.queryByText(/^\d{2}:\d{2}$/)).not.toBeInTheDocument();
+    // The console still follows the waiting job's history.
+    expect(FakeEventSource.instances.at(-1)?.url).toBe("/api/jobs/job-waiting/events/stream");
   });
 });

@@ -57,10 +57,10 @@ def test_collect_results_runs_existing_script_and_indexes_outputs(tmp_path: Path
 
     assert result["status"] == "passed"
     assert result["return_code"] == 0
-    assert result["output_md"] == "demo_project/experiment/results/comparison.md"
-    assert result["output_json"] == "demo_project/experiment/results/comparison.json"
+    assert result["output_md"] == "demo_project/experiment/results/comparison_table.md"
+    assert result["output_json"] == "demo_project/experiment/results/comparison_table.json"
     assert "collected" in result["stdout"]
-    assert {artifact["title"] for artifact in result["artifacts"]} >= {"comparison.md", "comparison.json"}
+    assert {artifact["title"] for artifact in result["artifacts"]} >= {"comparison_table.md", "comparison_table.json"}
 
 
 def test_validate_manuscript_runs_project_scoped_report(tmp_path: Path) -> None:

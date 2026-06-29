@@ -14,6 +14,10 @@ Usage:
     python collect_results.py experiment/results/ --output-md comparison.md --output-json comparison.json
     python collect_results.py experiment/results/ --metric-keys cls_auc_mean,recon_ssim
 
+To avoid ingesting its own output on subsequent runs, the collector always
+excludes files named "comparison_table.json" or "comparison.json" (legacy GUI
+output name), as well as the files given via --output-json / --output-md.
+
 Requires only Python 3.10+ stdlib (no external dependencies).
 """
 
@@ -23,13 +27,34 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+# Basenames of the collector's own outputs (current and legacy GUI name),
+# always excluded from scanning so the collector never ingests its own output.
+_ALWAYS_EXCLUDED_BASENAMES = {"comparison_table.json", "comparison.json"}
 
 
-def find_result_files(results_dir: Path) -> List[Path]:
-    """Find all non-empty JSON files under results_dir."""
+def find_result_files(
+    results_dir: Path,
+    exclude_paths: Optional[Set[Path]] = None,
+) -> List[Path]:
+    """
+    Find all non-empty JSON files under results_dir.
+
+    Skips any file whose resolved path is in exclude_paths (a set of
+    RESOLVED Paths) or whose basename is in _ALWAYS_EXCLUDED_BASENAMES.
+    """
+    exclude_paths = exclude_paths or set()
     json_files = sorted(results_dir.rglob("*.json"))
-    return [f for f in json_files if f.stat().st_size > 0]
+    kept = []
+    for f in json_files:
+        if f.name in _ALWAYS_EXCLUDED_BASENAMES:
+            continue
+        if f.resolve() in exclude_paths:
+            continue
+        if f.stat().st_size > 0:
+            kept.append(f)
+    return kept
 
 
 def extract_metrics_flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, float]:
@@ -118,6 +143,7 @@ def infer_round_from_path(path: Path) -> Optional[int]:
 def collect_results(
     results_dir: Path,
     metric_keys: Optional[List[str]] = None,
+    exclude_paths: Optional[Set[Path]] = None,
 ) -> Dict[str, Any]:
     """
     Collect all results from a directory into a structured format.
@@ -138,7 +164,7 @@ def collect_results(
             "warnings": [str]
         }
     """
-    json_files = find_result_files(results_dir)
+    json_files = find_result_files(results_dir, exclude_paths)
     entries = []
     warnings = []
 
@@ -221,6 +247,21 @@ def _short_key(k: str) -> str:
     return k.split(".")[-1] if "." in k else k
 
 
+def _column_labels(keys: List[str]) -> List[str]:
+    """
+    Build column header labels for a table.
+
+    Uses the short (prefix-stripped) form of each key when it is unique
+    within the table; falls back to the full dotted key when the short
+    form collides (e.g. keyword_rule.accuracy_mean vs majority.accuracy_mean).
+    """
+    shorts = [_short_key(k) for k in keys]
+    counts: Dict[str, int] = {}
+    for s in shorts:
+        counts[s] = counts.get(s, 0) + 1
+    return [s if counts[s] == 1 else k for k, s in zip(keys, shorts)]
+
+
 def format_markdown(collected: Dict[str, Any]) -> str:
     """Format collected results as a Markdown comparison table."""
     lines = []
@@ -275,7 +316,7 @@ def format_markdown(collected: Dict[str, Any]) -> str:
                 for r in rows:
                     mk.update(r["metrics"].keys())
                 mk_sorted = sorted(mk)
-                short_keys = [_short_key(k) for k in mk_sorted]
+                short_keys = _column_labels(mk_sorted)
 
                 header = "| Method | " + " | ".join(short_keys) + " |"
                 sep = "|--------|" + "|".join(["------"] * len(short_keys)) + "|"
@@ -303,7 +344,7 @@ def format_markdown(collected: Dict[str, Any]) -> str:
             for e in file_entries:
                 fk.update(e["metrics"].keys())
             fk_sorted = [k for k in sorted_keys if k in fk]
-            short_keys = [_short_key(k) for k in fk_sorted]
+            short_keys = _column_labels(fk_sorted)
 
             if fk_sorted:
                 header = "| File | " + " | ".join(short_keys) + " |"
@@ -343,6 +384,11 @@ Output:
   Prints a Markdown summary to stdout.
   With --output-md/--output-json, writes to files.
   JSON output includes source file paths for every metric (provenance).
+
+Exclusions:
+  Files named comparison_table.json or comparison.json (legacy GUI output
+  name) are ALWAYS excluded from scanning, as are the files passed via
+  --output-json/--output-md, so the collector never ingests its own output.
 """,
     )
 
@@ -381,7 +427,13 @@ Output:
     if args.metric_keys:
         metric_keys = [k.strip() for k in args.metric_keys.split(",")]
 
-    collected = collect_results(results_dir, metric_keys)
+    exclude_paths: Set[Path] = set()
+    if args.output_md:
+        exclude_paths.add(Path(args.output_md).resolve())
+    if args.output_json:
+        exclude_paths.add(Path(args.output_json).resolve())
+
+    collected = collect_results(results_dir, metric_keys, exclude_paths=exclude_paths)
 
     # Markdown output
     md_text = format_markdown(collected)

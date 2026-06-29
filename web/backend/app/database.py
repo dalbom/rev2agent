@@ -2,9 +2,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+BUSY_STATUSES = ("queued", "running", "waiting_for_approval", "waiting_to_continue")
+TERMINAL_STATUSES = ("completed", "failed", "interrupted", "cancelled", "rejected")
+
+
+class ProjectBusyError(Exception):
+    def __init__(self, active_job_id: str) -> None:
+        super().__init__(f"Another job ({active_job_id}) is already active for this project.")
+        self.active_job_id = active_job_id
 
 
 class RuntimeStore:
@@ -36,34 +48,137 @@ class RuntimeStore:
         token_usage: dict[str, Any] | None = None,
         last_error: str | None = None,
     ) -> None:
-        now = utc_now()
         with self._connect() as conn:
-            conn.execute(
-                """
-                insert into jobs (
-                    job_id, project_dir, phase, sub_step, role, thread_id, turn_id,
-                    status, approval_state, sandbox, started_at, completed_at,
-                    last_error, token_usage_json
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    job_id,
-                    project_dir,
-                    phase,
-                    sub_step,
-                    role,
-                    thread_id,
-                    turn_id,
-                    status,
-                    approval_state,
-                    sandbox,
-                    now,
-                    None,
-                    last_error,
-                    json_dumps(token_usage),
-                ),
+            self._insert_job(
+                conn,
+                job_id=job_id,
+                project_dir=project_dir,
+                phase=phase,
+                sub_step=sub_step,
+                role=role,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                status=status,
+                approval_state=approval_state,
+                sandbox=sandbox,
+                token_usage=token_usage,
+                last_error=last_error,
             )
+
+    def create_job_exclusive(
+        self,
+        *,
+        job_id: str,
+        project_dir: str,
+        phase: int,
+        sub_step: str | None,
+        role: str,
+        thread_id: str | None,
+        turn_id: str | None,
+        status: str,
+        approval_state: str,
+        sandbox: str,
+        token_usage: dict[str, Any] | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                f"""
+                select job_id from jobs
+                where project_dir = ? and status in ({_busy_status_placeholders()})
+                limit 1
+                """,
+                (project_dir, *BUSY_STATUSES),
+            ).fetchone()
+            if row is not None:
+                raise ProjectBusyError(str(row["job_id"]))
+            self._insert_job(
+                conn,
+                job_id=job_id,
+                project_dir=project_dir,
+                phase=phase,
+                sub_step=sub_step,
+                role=role,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                status=status,
+                approval_state=approval_state,
+                sandbox=sandbox,
+                token_usage=token_usage,
+                last_error=last_error,
+            )
+
+    def requeue_job_exclusive(self, job_id: str, project_dir: str) -> None:
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                f"""
+                select job_id from jobs
+                where project_dir = ? and status in ({_busy_status_placeholders()})
+                    and job_id != ?
+                limit 1
+                """,
+                (project_dir, *BUSY_STATUSES, job_id),
+            ).fetchone()
+            if row is not None:
+                raise ProjectBusyError(str(row["job_id"]))
+            conn.execute("update jobs set status = 'queued' where job_id = ?", (job_id,))
+
+    @staticmethod
+    def _insert_job(
+        conn: sqlite3.Connection,
+        *,
+        job_id: str,
+        project_dir: str,
+        phase: int,
+        sub_step: str | None,
+        role: str,
+        thread_id: str | None,
+        turn_id: str | None,
+        status: str,
+        approval_state: str,
+        sandbox: str,
+        token_usage: dict[str, Any] | None,
+        last_error: str | None,
+    ) -> None:
+        conn.execute(
+            """
+            insert into jobs (
+                job_id, project_dir, phase, sub_step, role, thread_id, turn_id,
+                status, approval_state, sandbox, started_at, completed_at,
+                last_error, token_usage_json
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                project_dir,
+                phase,
+                sub_step,
+                role,
+                thread_id,
+                turn_id,
+                status,
+                approval_state,
+                sandbox,
+                utc_now(),
+                None,
+                last_error,
+                json_dumps(token_usage),
+            ),
+        )
+
+    def list_project_jobs(self, project_dir: str, *, active_only: bool = False) -> list[dict[str, Any]]:
+        query = "select * from jobs where project_dir = ?"
+        params: tuple[Any, ...] = (project_dir,)
+        if active_only:
+            query += f" and status in ({_busy_status_placeholders()})"
+            params += BUSY_STATUSES
+        query += " order by started_at desc"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
 
     def get_job(self, job_id: str) -> dict[str, Any]:
         with self._connect() as conn:
@@ -75,15 +190,30 @@ class RuntimeStore:
     def update_job(self, job_id: str, **fields: Any) -> None:
         if not fields:
             return
-        columns = []
-        values = []
-        for key, value in fields.items():
-            column = "token_usage_json" if key == "token_usage" else key
-            columns.append(f"{column} = ?")
-            values.append(json_dumps(value) if key == "token_usage" else value)
+        columns, values = _job_update_columns(fields)
         values.append(job_id)
         with self._connect() as conn:
             conn.execute(f"update jobs set {', '.join(columns)} where job_id = ?", values)
+
+    def update_job_if_active(self, job_id: str, **fields: Any) -> bool:
+        """Update a job only if it has not already reached a terminal status.
+
+        Returns True when the row was updated, False when the job was already
+        terminal (completed/failed/interrupted/cancelled/rejected) or missing.
+        """
+        if not fields:
+            return False
+        columns, values = _job_update_columns(fields)
+        values.append(job_id)
+        values.extend(TERMINAL_STATUSES)
+        terminal_placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"update jobs set {', '.join(columns)} "
+                f"where job_id = ? and status not in ({terminal_placeholders})",
+                values,
+            )
+            return cursor.rowcount > 0
 
     def add_event(
         self,
@@ -110,6 +240,26 @@ class RuntimeStore:
                 (job_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_events_after(self, job_id: str, after_event_id: int) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select * from events where job_id = ? and event_id > ? order by event_id",
+                (job_id, after_event_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_active_jobs_interrupted(self, *, reason: str) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                update jobs
+                set status = 'interrupted', completed_at = ?, last_error = ?
+                where status in ('queued', 'running')
+                """,
+                (utc_now(), reason),
+            )
+            return int(cursor.rowcount)
 
     def add_approval(
         self,
@@ -229,10 +379,15 @@ class RuntimeStore:
         with self._connect() as conn:
             conn.execute("delete from artifacts where artifact_id = ?", (artifact_id,))
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _initialize(self) -> None:
         with self._connect() as conn:
@@ -290,6 +445,20 @@ class RuntimeStore:
                 );
                 """
             )
+
+
+def _busy_status_placeholders() -> str:
+    return ", ".join("?" for _ in BUSY_STATUSES)
+
+
+def _job_update_columns(fields: dict[str, Any]) -> tuple[list[str], list[Any]]:
+    columns: list[str] = []
+    values: list[Any] = []
+    for key, value in fields.items():
+        column = "token_usage_json" if key == "token_usage" else key
+        columns.append(f"{column} = ?")
+        values.append(json_dumps(value) if key == "token_usage" else value)
+    return columns, values
 
 
 def utc_now() -> str:

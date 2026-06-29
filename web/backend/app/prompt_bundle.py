@@ -66,7 +66,14 @@ def project_context_section(repo_root: Path, project_path: Path) -> str:
         "## Project Context\n\n"
         f"- Repository root: `{repo_root.resolve()}`\n"
         f"- Project directory: `{project_rel}`\n"
-        "- Treat the user prompt below as the latest user feedback or instruction for this phase."
+        "- Treat the user prompt below as the latest user feedback or instruction for this phase.\n"
+        "- The session working directory is already the project directory; create and reference "
+        "files relative to it (for example experiment/scripts/run.py, "
+        "summaries/phase4_experiment_design.md).\n"
+        "- Repository instructions and phase prompts write paths with a {project_dir}/ prefix; "
+        "that prefix refers to the CURRENT directory here. Never create a "
+        f"'{project_rel}' subdirectory inside the project "
+        f"(no nested {project_rel}/{project_rel} paths)."
     )
 
 

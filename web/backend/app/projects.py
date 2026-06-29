@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -75,36 +76,25 @@ def load_project_state(repo_root: Path, project_path: Path) -> dict[str, Any]:
     return data
 
 
-def create_project_draft(repo_root: Path, *, research_idea: str = "") -> ProjectSummary:
+def create_project_draft(
+    repo_root: Path,
+    *,
+    research_idea: str = "",
+    project_name: str = "",
+) -> ProjectSummary:
     root = repo_root.resolve()
+    idea = research_idea.strip()
+    name = project_name.strip()
+
+    if name:
+        return _create_named_project(root, name=name, research_idea=idea)
+
     project_path = _next_available_draft_path(root)
     project_path.mkdir(exist_ok=True)
     state_path = project_path / ".research_state.json"
-    idea = research_idea.strip()
 
     if not state_path.exists():
-        now = _utc_now()
-        project_dir = project_path.name
-        state = {
-            "project_dir": project_dir,
-            "current_phase": 1,
-            "sub_step": None,
-            "current_round": 0,
-            "phase_status": "in_progress",
-            "project_status": "active",
-            "created_at": now,
-            "updated_at": now,
-            "topic": {
-                "broad_topic": "",
-                "specific_topic": idea,
-                "research_question": "",
-                "positioning": "",
-                "target_venue": "",
-                "target_dataset": [],
-                "metrics": [],
-            },
-            "phase_history": [],
-        }
+        state = _fresh_project_state(project_path.name, idea)
         state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     elif idea:
         state = load_project_state(root, project_path)
@@ -115,6 +105,59 @@ def create_project_draft(repo_root: Path, *, research_idea: str = "") -> Project
         state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     return _summarize_project(root, project_path, state_path)
+
+
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{digit}" for digit in range(1, 10)}
+    | {f"LPT{digit}" for digit in range(1, 10)}
+)
+
+
+def _create_named_project(root: Path, *, name: str, research_idea: str) -> ProjectSummary:
+    if (
+        not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name)
+        or name.upper() in _WINDOWS_RESERVED_NAMES
+    ):
+        raise ValueError(
+            "Project name must start with a letter or digit and may only contain "
+            "letters, digits, '-' and '_' (max 64 chars)."
+        )
+    project_path = root / name
+    if project_path.exists():
+        raise ValueError(f"A folder named '{name}' already exists; choose another project name.")
+    try:
+        project_path.mkdir()
+    except OSError as exc:
+        raise ValueError(f"Could not create project folder '{name}': {exc}") from exc
+    state_path = project_path / ".research_state.json"
+    state = _fresh_project_state(name, research_idea)
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return _summarize_project(root, project_path, state_path)
+
+
+def _fresh_project_state(project_dir: str, research_idea: str) -> dict[str, Any]:
+    now = _utc_now()
+    return {
+        "project_dir": project_dir,
+        "current_phase": 1,
+        "sub_step": None,
+        "current_round": 0,
+        "phase_status": "in_progress",
+        "project_status": "active",
+        "created_at": now,
+        "updated_at": now,
+        "topic": {
+            "broad_topic": "",
+            "specific_topic": research_idea,
+            "research_question": "",
+            "positioning": "",
+            "target_venue": "",
+            "target_dataset": [],
+            "metrics": [],
+        },
+        "phase_history": [],
+    }
 
 
 def archive_project(repo_root: Path, project_dir: str) -> ProjectSummary:
@@ -169,7 +212,13 @@ def _next_available_draft_path(root: Path) -> Path:
             state = load_project_state(root, candidate)
         except (FileNotFoundError, ValueError):
             return candidate
-        if state.get("project_dir") == name and not _draft_has_artifacts(candidate):
+        topic = state.get("topic") if isinstance(state.get("topic"), dict) else {}
+        if (
+            state.get("project_dir") == name
+            and not _draft_has_artifacts(candidate)
+            and _topic_label(topic) == ""
+            and not state.get("phase_history")
+        ):
             return candidate
     raise RuntimeError("Could not find an available draft project path")
 

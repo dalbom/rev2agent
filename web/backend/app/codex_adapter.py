@@ -199,8 +199,11 @@ class CodexSdkAdapter:
             self._active_turns[(thread_id, turn_id)] = handle
             try:
                 async for notification in handle.stream():
+                    event_type = notification_event_type(notification)
+                    if notification_is_delta(notification) and "delta" not in event_type.lower():
+                        event_type = f"{event_type}/delta"
                     yield StreamEventData(
-                        event_type=notification_event_type(notification),
+                        event_type=event_type,
                         summary=summarize_notification(notification),
                         thread_id=thread_id,
                         turn_id=turn_id,
@@ -250,7 +253,7 @@ def turn_result_from_sdk(result: Any) -> TurnResultData:
     )
 
 
-def summarize_notification(notification: Any) -> str:
+def _extract_summary(notification: Any) -> tuple[str, str | None]:
     root = getattr(notification, "root", None)
     payload = getattr(root, "payload", None) or getattr(notification, "payload", None)
     for source in (
@@ -262,14 +265,29 @@ def summarize_notification(notification: Any) -> str:
     ):
         for attr in ("message", "text", "summary", "delta", "status"):
             value = getattr(source, attr, None)
+            if attr == "delta" and isinstance(value, str) and value:
+                # Deltas are stored unstripped so the frontend can concatenate
+                # them without inventing whitespace.
+                return value, "delta"
             if isinstance(value, str) and value.strip():
-                return value.strip()
+                return value.strip(), attr
             if value is not None and attr == "status":
-                return str(value)
+                return str(value), attr
+    return "", None
+
+
+def summarize_notification(notification: Any) -> str:
+    summary, source_attr = _extract_summary(notification)
+    if source_attr is not None:
+        return summary
     method = notification_event_type(notification)
     if isinstance(method, str) and method.strip():
         return method.strip()
     return type(notification).__name__
+
+
+def notification_is_delta(notification: Any) -> bool:
+    return _extract_summary(notification)[1] == "delta"
 
 
 def notification_event_type(notification: Any) -> str:

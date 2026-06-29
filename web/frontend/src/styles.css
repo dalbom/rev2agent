@@ -238,6 +238,10 @@ h3 {
 .create-project-form textarea {
   min-height: 132px;
   resize: vertical;
+}
+
+.create-project-form textarea,
+.create-project-form input {
   border: 1px solid #cfd8d5;
   border-radius: 8px;
   padding: 12px;
@@ -246,7 +250,8 @@ h3 {
   font: inherit;
 }
 
-.create-project-form textarea:focus-visible {
+.create-project-form textarea:focus-visible,
+.create-project-form input:focus-visible {
   outline: 3px solid #2f6f8f;
   outline-offset: 2px;
 }
@@ -335,6 +340,11 @@ dd {
   padding: 10px 14px;
 }
 
+.compact-button {
+  min-height: 36px;
+  padding: 7px 11px;
+}
+
 .primary-button {
   background: #2f6f8f;
   color: #ffffff;
@@ -398,7 +408,7 @@ dd {
 }
 
 .phase-instruction-form textarea {
-  min-height: 110px;
+  min-height: 96px;
   resize: vertical;
   border: 1px solid #cfd8d5;
   border-radius: 8px;
@@ -430,9 +440,41 @@ dd {
   min-height: 220px;
 }
 
-.latest-artifact-panel {
-  grid-column: 1 / -1;
+.console-toolbar {
+  align-items: center;
+}
+
+.console-panel .event-list {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.embedded-console-panel {
   display: grid;
+  gap: 10px;
+}
+
+.embedded-console-panel .event-list {
+  min-height: 220px;
+  max-height: min(42vh, 420px);
+  margin: 0;
+  padding: 12px;
+  overflow-y: auto;
+  border: 1px solid #d9e0dd;
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.elapsed-label {
+  margin-left: auto;
+  color: #53656b;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.latest-artifact-panel {
+  display: grid;
+  align-content: start;
   gap: 14px;
 }
 
@@ -460,16 +502,35 @@ dd {
 
 .event-list li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   color: #53656b;
 }
 
+.console-event {
+  white-space: pre-wrap;
+}
+
 .event-dot {
+  flex: 0 0 auto;
+  margin-top: 0.45em;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: #2f6f8f;
+}
+
+.console-event.user .event-dot {
+  background: #d8b25f;
+}
+
+.console-event.notice .event-dot,
+.console-event.status .event-dot {
+  background: #6c7a80;
+}
+
+.console-event.error .event-dot {
+  background: #b23a3a;
 }
 
 .tab-row {
@@ -707,6 +768,7 @@ dd {
   margin: 0;
   color: #1e5d39;
   font-weight: 700;
+  white-space: pre-wrap;
 }
 
 .error-banner {

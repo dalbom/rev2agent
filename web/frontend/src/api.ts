@@ -57,6 +57,21 @@ export interface RunEvent {
   event_type: string;
   summary: string;
   timestamp?: string;
+  status?: string;
+  job_id?: string;
+  raw_payload_json?: string | null;
+}
+
+export interface JobRecord {
+  job_id: string;
+  project_dir: string;
+  phase: number;
+  status: string;
+  approval_state: string;
+  sandbox: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  last_error: string | null;
 }
 
 export interface ProjectToolResult {
@@ -99,130 +114,135 @@ export interface ToolStatus {
   path: string | null;
 }
 
-export async function listProjects(): Promise<ProjectDiscoveryResult> {
-  const response = await fetch("/api/projects");
+export const TERMINAL_JOB_STATUSES = ["completed", "failed", "interrupted", "cancelled", "rejected"];
+
+async function requestJson<T>(failureMessage: string, input: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, init);
   if (!response.ok) {
-    throw new Error(`Failed to load projects: ${response.status}`);
+    let detail = "";
+    try {
+      const body: unknown = await response.json();
+      if (body && typeof body === "object" && "detail" in body && typeof body.detail === "string") {
+        detail = body.detail;
+      }
+    } catch {
+      // Body was not JSON; fall back to the status code.
+    }
+    throw new Error(detail ? `${failureMessage}: ${detail}` : `${failureMessage}: ${response.status}`);
   }
-  return response.json();
+  return response.json() as Promise<T>;
 }
 
-export async function createProjectDraft(researchIdea: string): Promise<ProjectSummary> {
-  const response = await fetch("/api/projects", {
+function projectPath(project: ProjectSummary): string {
+  return encodeURIComponent(project.project_dir);
+}
+
+export async function listProjects(): Promise<ProjectDiscoveryResult> {
+  return requestJson("Failed to load projects", "/api/projects");
+}
+
+export async function createProjectDraft(researchIdea: string, projectName?: string): Promise<ProjectSummary> {
+  return requestJson("Failed to start project", "/api/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ research_idea: researchIdea })
+    body: JSON.stringify({ research_idea: researchIdea, project_name: projectName ?? "" })
   });
-  if (!response.ok) {
-    throw new Error(`Failed to start project: ${response.status}`);
-  }
-  return response.json();
 }
 
 export async function archiveProject(project: ProjectSummary): Promise<ProjectSummary> {
-  const response = await fetch(`/api/projects/${project.project_dir}/archive`, { method: "POST" });
-  if (!response.ok) {
-    throw new Error(`Failed to archive project: ${response.status}`);
-  }
-  return response.json();
+  return requestJson("Failed to archive project", `/api/projects/${projectPath(project)}/archive`, {
+    method: "POST"
+  });
+}
+
+export async function listProjectJobs(project: ProjectSummary, activeOnly: boolean): Promise<JobRecord[]> {
+  return requestJson(
+    "Failed to load project jobs",
+    `/api/projects/${projectPath(project)}/jobs?active=${activeOnly ? "true" : "false"}`
+  );
 }
 
 export async function startPhaseJob(
   project: ProjectSummary,
   action: string,
-  prompt: string,
-  approved = false
+  prompt: string
 ): Promise<PhaseJobResult> {
-  const response = await fetch(`/api/projects/${project.project_dir}/phase/${project.phase}/jobs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, prompt, approved })
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to start phase job: ${response.status}`);
+  if (project.phase === null) {
+    throw new Error("Project phase is unknown; refresh the project list before starting jobs.");
   }
-  return response.json();
+  return requestJson(
+    "Failed to start phase job",
+    `/api/projects/${projectPath(project)}/phase/${project.phase}/jobs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, prompt })
+    }
+  );
+}
+
+export async function getJob(jobId: string): Promise<JobRecord> {
+  return requestJson("Failed to load job", `/api/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function listJobEvents(jobId: string): Promise<RunEvent[]> {
+  return requestJson("Failed to load job events", `/api/jobs/${encodeURIComponent(jobId)}/events`);
 }
 
 export async function submitJobApproval(
   jobId: string,
   userAction: "approved" | "rejected"
 ): Promise<ApprovalResult> {
-  const response = await fetch(`/api/jobs/${jobId}/approval`, {
+  return requestJson("Failed to submit approval", `/api/jobs/${encodeURIComponent(jobId)}/approval`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ user_action: userAction })
   });
-  if (!response.ok) {
-    throw new Error(`Failed to submit approval: ${response.status}`);
-  }
-  return response.json();
 }
 
 export async function continueJob(jobId: string, action: string, prompt: string): Promise<PhaseJobResult> {
-  const response = await fetch(`/api/jobs/${jobId}/continue`, {
+  return requestJson("Failed to continue job", `/api/jobs/${encodeURIComponent(jobId)}/continue`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, prompt })
   });
-  if (!response.ok) {
-    throw new Error(`Failed to continue job: ${response.status}`);
-  }
-  return response.json();
 }
 
 export async function interruptJob(jobId: string): Promise<InterruptResult> {
-  const response = await fetch(`/api/jobs/${jobId}/interrupt`, { method: "POST" });
-  if (!response.ok) {
-    throw new Error(`Failed to interrupt job: ${response.status}`);
-  }
-  return response.json();
+  return requestJson("Failed to interrupt job", `/api/jobs/${encodeURIComponent(jobId)}/interrupt`, {
+    method: "POST"
+  });
 }
 
 export async function listArtifacts(project: ProjectSummary): Promise<ArtifactRecord[]> {
-  const response = await fetch(`/api/projects/${project.project_dir}/artifacts`);
-  if (!response.ok) {
-    throw new Error(`Failed to load artifacts: ${response.status}`);
-  }
-  return response.json();
+  return requestJson("Failed to load artifacts", `/api/projects/${projectPath(project)}/artifacts`);
 }
 
 export async function readArtifact(project: ProjectSummary, artifactId: number): Promise<ArtifactContent> {
-  const response = await fetch(`/api/projects/${project.project_dir}/artifacts/${artifactId}`);
-  if (!response.ok) {
-    throw new Error(`Failed to read artifact: ${response.status}`);
-  }
-  return response.json();
+  return requestJson(
+    "Failed to read artifact",
+    `/api/projects/${projectPath(project)}/artifacts/${artifactId}`
+  );
 }
 
 export async function collectResults(project: ProjectSummary): Promise<ProjectToolResult> {
-  const response = await fetch(`/api/projects/${project.project_dir}/collect-results`, { method: "POST" });
-  if (!response.ok) {
-    throw new Error(`Failed to collect results: ${response.status}`);
-  }
-  return response.json();
+  return requestJson("Failed to collect results", `/api/projects/${projectPath(project)}/collect-results`, {
+    method: "POST"
+  });
 }
 
 export async function validateManuscript(project: ProjectSummary): Promise<ProjectToolResult> {
-  const response = await fetch(`/api/projects/${project.project_dir}/validate-manuscript`, { method: "POST" });
-  if (!response.ok) {
-    throw new Error(`Failed to validate manuscript: ${response.status}`);
-  }
-  return response.json();
+  return requestJson(
+    "Failed to validate manuscript",
+    `/api/projects/${projectPath(project)}/validate-manuscript`,
+    { method: "POST" }
+  );
 }
 
 export async function getSettings(): Promise<SettingsStatus> {
-  const response = await fetch("/api/settings");
-  if (!response.ok) {
-    throw new Error(`Failed to load settings: ${response.status}`);
-  }
-  return response.json();
+  return requestJson("Failed to load settings", "/api/settings");
 }
 
 export async function completeHostOnlySetup(): Promise<SettingsStatus> {
-  const response = await fetch("/api/setup/host-only", { method: "POST" });
-  if (!response.ok) {
-    throw new Error(`Failed to complete Phase 0 setup: ${response.status}`);
-  }
-  return response.json();
+  return requestJson("Failed to complete Phase 0 setup", "/api/setup/host-only", { method: "POST" });
 }

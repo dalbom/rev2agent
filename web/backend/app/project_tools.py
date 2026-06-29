@@ -26,8 +26,10 @@ class ProjectToolService:
         if not results_dir.is_dir():
             raise FileNotFoundError(results_dir)
 
-        output_md = results_dir / "comparison.md"
-        output_json = results_dir / "comparison.json"
+        # prompts/06_result_analysis.md and CLAUDE.md treat comparison_table.json
+        # as the single source of truth for metrics; the GUI must write the same files.
+        output_md = results_dir / "comparison_table.md"
+        output_json = results_dir / "comparison_table.json"
         result = self._run_script(
             [
                 self._script("collect_results.py"),
@@ -70,14 +72,22 @@ class ProjectToolService:
         }
 
     def _run_script(self, args: list[str | Path]) -> dict[str, Any]:
-        completed = subprocess.run(
-            [str(arg) for arg in [self.python_executable, *args]],
-            cwd=self.repo_root,
-            text=True,
-            capture_output=True,
-            timeout=300,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                [str(arg) for arg in [self.python_executable, *args]],
+                cwd=self.repo_root,
+                text=True,
+                capture_output=True,
+                timeout=300,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "status": "failed",
+                "return_code": -1,
+                "stdout": _decoded_output(exc.stdout),
+                "stderr": f"Script timed out after {exc.timeout} seconds.",
+            }
         return {
             "status": "passed" if completed.returncode == 0 else "failed",
             "return_code": completed.returncode,
@@ -99,3 +109,11 @@ class ProjectToolService:
 
     def _repo_relative(self, path: Path) -> str:
         return path.resolve().relative_to(self.repo_root).as_posix()
+
+
+def _decoded_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value

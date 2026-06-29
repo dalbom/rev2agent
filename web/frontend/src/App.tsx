@@ -1,5 +1,17 @@
-import { AlertTriangle, Archive, Files, FolderOpen, Play, Plus, RefreshCw, Settings, Square, Terminal } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  AlertTriangle,
+  Archive,
+  Files,
+  FolderOpen,
+  Play,
+  Plus,
+  RefreshCw,
+  Settings,
+  Square,
+  Terminal,
+  Trash2
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -9,9 +21,12 @@ import {
   completeHostOnlySetup,
   continueJob,
   createProjectDraft,
+  getJob,
   getSettings,
   interruptJob,
   listArtifacts,
+  listJobEvents,
+  listProjectJobs,
   listProjects,
   readArtifact,
   startPhaseJob,
@@ -22,9 +37,11 @@ import {
   type PhaseJobResult,
   type ProjectDiscoveryResult,
   type ProjectSummary,
+  type ProjectToolResult,
   type RunEvent,
   type SettingsStatus,
-  type ToolStatus
+  type ToolStatus,
+  TERMINAL_JOB_STATUSES
 } from "./api";
 import "./styles.css";
 
@@ -36,12 +53,37 @@ const EMPTY_DISCOVERY: ProjectDiscoveryResult = {
   projects: []
 };
 
+const TITLE_ACRONYMS = new Map([
+  ["api", "API"],
+  ["cpu", "CPU"],
+  ["gpu", "GPU"],
+  ["gui", "GUI"],
+  ["lidar", "LiDAR"],
+  ["pdf", "PDF"],
+  ["qa", "QA"],
+  ["sdk", "SDK"]
+]);
+
+function formatProjectTitle(project: ProjectSummary) {
+  const source = project.project_dir || project.topic || "Project";
+  return source
+    .replace(/[_-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLowerCase();
+      return TITLE_ACRONYMS.get(lower) ?? `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
+    })
+    .join(" ");
+}
+
 export default function App() {
   const [discovery, setDiscovery] = useState<ProjectDiscoveryResult>(EMPTY_DISCOVERY);
   const [selectedProject, setSelectedProject] = useState<ProjectSummary | null>(null);
   const [view, setView] = useState<View>("home");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [autoStartProjectDir, setAutoStartProjectDir] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -66,23 +108,25 @@ export default function App() {
   const activeProject = selectedProject ?? discovery.projects[0] ?? null;
   const pageTitle = useMemo(() => {
     if (view === "settings") return "Settings And Safety";
-    if (view === "phase" && activeProject) return activeProject.phase_label;
+    if (view === "phase" && activeProject) return formatProjectTitle(activeProject);
     if (view === "artifacts") return "Artifact Browser";
     return "Project Home";
   }, [activeProject, view]);
 
   function openProject(project: ProjectSummary) {
     setSelectedProject(project);
+    setAutoStartProjectDir(null);
     setView("phase");
   }
 
-  async function startNewProject(researchIdea: string) {
-    const draft = await createProjectDraft(researchIdea);
+  async function startNewProject(researchIdea: string, projectName?: string) {
+    const draft = await createProjectDraft(researchIdea, projectName);
     setDiscovery((current) => ({
       ...current,
       projects: [draft, ...current.projects.filter((project) => project.project_dir !== draft.project_dir)]
     }));
     setSelectedProject(draft);
+    setAutoStartProjectDir(draft.project_dir);
     setView("phase");
   }
 
@@ -93,6 +137,29 @@ export default function App() {
       config_exists: configExists,
       setup_required: !configExists
     }));
+  }
+
+  async function refreshProjects() {
+    const previousProjects = discovery.projects;
+    try {
+      const result = await listProjects();
+      const previousDirs = new Set(previousProjects.map((project) => project.project_dir));
+      const appeared = result.projects.filter((project) => !previousDirs.has(project.project_dir));
+      setDiscovery(result);
+      setSelectedProject((current) => {
+        if (!current) return current;
+        const refreshed = result.projects.find((project) => project.project_dir === current.project_dir);
+        // When a draft is finalized into a real folder, jump to the project that just appeared.
+        const shouldJumpToNewProject =
+          appeared.length > 0 && (!refreshed || current.project_dir.startsWith("_new_project_draft"));
+        if (shouldJumpToNewProject) {
+          return [...appeared].sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))[0];
+        }
+        return refreshed ?? current;
+      });
+    } catch {
+      // Keep showing the last known project list if the refresh fails.
+    }
   }
 
   async function archiveExistingProject(project: ProjectSummary) {
@@ -176,8 +243,13 @@ export default function App() {
           <PhaseDashboard
             project={activeProject}
             setupRequired={discovery.setup_required}
+            autoStart={autoStartProjectDir === activeProject.project_dir}
+            onAutoStartConsumed={() => {
+              setAutoStartProjectDir((current) => (current === activeProject.project_dir ? null : current));
+            }}
             onArtifacts={() => setView("artifacts")}
             onSettings={() => setView("settings")}
+            onProjectRefresh={refreshProjects}
           />
         ) : null}
         {!loading && view === "artifacts" && activeProject ? <ArtifactBrowser project={activeProject} /> : null}
@@ -196,11 +268,12 @@ function ProjectHome({
   projects: ProjectSummary[];
   setupRequired: boolean;
   onOpen: (project: ProjectSummary) => void;
-  onCreate: (researchIdea: string) => Promise<void>;
+  onCreate: (researchIdea: string, projectName?: string) => Promise<void>;
   onArchive: (project: ProjectSummary) => Promise<void>;
 }) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [researchIdea, setResearchIdea] = useState("");
+  const [projectName, setProjectName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [archiveMessage, setArchiveMessage] = useState<string | null>(null);
@@ -221,7 +294,7 @@ function ProjectHome({
     setCreating(true);
     setCreateError(null);
     try {
-      await onCreate(trimmedIdea);
+      await onCreate(trimmedIdea, projectName.trim());
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create project.");
     } finally {
@@ -241,6 +314,17 @@ function ProjectHome({
         }}
         placeholder="Describe the research direction, dataset, downstream task, and success metric."
         rows={5}
+      />
+      <label htmlFor="project-name">Project folder name (optional)</label>
+      <input
+        id="project-name"
+        type="text"
+        value={projectName}
+        onChange={(event) => {
+          setProjectName(event.target.value);
+          if (createError) setCreateError(null);
+        }}
+        placeholder="e.g. gui_qa_tiny_sentiment - leave blank to start an unnamed draft"
       />
       {createError ? (
         <p className="warning-text" role="alert">
@@ -371,68 +455,206 @@ function defaultPhasePrompt(project: ProjectSummary) {
 
 function formatProjectTimestamp(timestamp: string | null) {
   if (!timestamp) return "Unknown";
-  const match = timestamp.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/);
-  return match ? `${match[1]} ${match[2]}` : timestamp;
+  // Backend timestamps are UTC; treat suffix-less strings as UTC and render local time.
+  const hasTimezone = /(Z|[+-]\d{2}:?\d{2})$/i.test(timestamp);
+  const date = new Date(hasTimezone ? timestamp : `${timestamp}Z`);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(
+    date.getMinutes()
+  )}`;
+}
+
+interface PendingApproval {
+  result: PhaseJobResult;
+  action: string;
+  prompt: string;
+}
+
+interface SubmittedPrompt {
+  id: number;
+  text: string;
+}
+
+const WAITING_JOB_STATUSES = ["waiting_for_approval", "waiting_to_continue"];
+
+function jobStatusMessage(status: string) {
+  if (status === "queued" || status === "running") return "Rev2Agent is working now.";
+  if (status === "completed" || status === "rejected") return "Rev2Agent is waiting for your next prompt.";
+  if (status === "interrupted") return "Rev2Agent stopped. You can revise the prompt and run the step again.";
+  if (status === "failed") return "Rev2Agent hit an error. Review the latest message and try again.";
+  if (status === "cancelled") return "Rev2Agent stopped before finishing.";
+  if (WAITING_JOB_STATUSES.includes(status)) {
+    return "Rev2Agent is waiting for approval. Press Stop to clear this waiting job, then run the step again.";
+  }
+  return "Rev2Agent is waiting for your next prompt.";
 }
 
 function PhaseDashboard({
   project,
   setupRequired,
+  autoStart,
+  onAutoStartConsumed,
   onArtifacts,
-  onSettings
+  onSettings,
+  onProjectRefresh
 }: {
   project: ProjectSummary;
   setupRequired: boolean;
+  autoStart: boolean;
+  onAutoStartConsumed: () => void;
   onArtifacts: () => void;
   onSettings: () => void;
+  onProjectRefresh: () => Promise<void> | void;
 }) {
   const [jobMessage, setJobMessage] = useState<string | null>(null);
-  const [approval, setApproval] = useState<PhaseJobResult | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [approvalBusy, setApprovalBusy] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobStatus, setActiveJobStatus] = useState<string | null>(null);
+  const [jobRunning, setJobRunning] = useState(false);
+  const [runToken, setRunToken] = useState(0);
+  const [artifactRefreshToken, setArtifactRefreshToken] = useState(0);
   const [launching, setLaunching] = useState(false);
+  const launchInFlight = useRef(false);
   const [settings, setSettings] = useState<SettingsStatus | null>(null);
   const [showInstallCommand, setShowInstallCommand] = useState(false);
   const [phaseInstruction, setPhaseInstruction] = useState("");
-  const [pendingApprovalPrompt, setPendingApprovalPrompt] = useState<string | null>(null);
   const [refreshingSettings, setRefreshingSettings] = useState(false);
+  const [submittedPrompt, setSubmittedPrompt] = useState<SubmittedPrompt | null>(null);
+  const submittedPromptId = useRef(0);
+  const autoStartedProjectDir = useRef<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    getSettings().then((status) => {
-      if (alive) setSettings(status);
-    });
+    getSettings()
+      .then((status) => {
+        if (alive) setSettings(status);
+      })
+      .catch(() => {
+        // Environment checks are advisory; the dashboard still works without them.
+      });
     return () => {
       alive = false;
     };
   }, []);
 
-  const needsPhaseSevenLatexChoice = project.phase === 7 && settings?.tools.latex.available === false;
-  const canRunExperimentScripts = project.phase === 5 && !setupRequired;
+  useEffect(() => {
+    // Reconcile with the backend: adopt a job that is already active for this
+    // project (e.g. after a page reload) so it can be observed and stopped.
+    let alive = true;
+    setActiveJobId(null);
+    setActiveJobStatus(null);
+    setJobRunning(false);
+    setJobMessage(null);
+    setPendingApproval(null);
+    if (autoStart) return;
+    listProjectJobs(project, true)
+      .then((jobs) => {
+        if (!alive || jobs.length === 0) return;
+        const job = jobs[0];
+        setActiveJobId(job.job_id);
+        setActiveJobStatus(job.status);
+        setRunToken((token) => token + 1);
+        if (WAITING_JOB_STATUSES.includes(job.status)) {
+          // The original approval prompt is not persisted server-side, so the
+          // dialog cannot be restored; guide the user to Stop and rerun.
+          setJobRunning(false);
+          setJobMessage(jobStatusMessage(job.status));
+        } else {
+          setJobRunning(!TERMINAL_JOB_STATUSES.includes(job.status));
+          setJobMessage(jobStatusMessage(job.status));
+        }
+      })
+      .catch(() => {
+        // Reconciliation is best-effort; the dashboard still works without it.
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.project_dir]);
 
-  async function launch(action: string, prompt?: string) {
+  const needsPhaseSevenLatexChoice = project.phase === 7 && settings?.tools.latex.available === false;
+
+  function refreshProjectOutputs() {
+    setArtifactRefreshToken((token) => token + 1);
+    void onProjectRefresh();
+  }
+
+  function beginTrackingJob(result: PhaseJobResult) {
+    setActiveJobId(result.job_id);
+    setActiveJobStatus(result.status);
+    setJobRunning(!TERMINAL_JOB_STATUSES.includes(result.status));
+    setRunToken((token) => token + 1);
+    setJobMessage(jobStatusMessage(result.status));
+    if (TERMINAL_JOB_STATUSES.includes(result.status)) {
+      refreshProjectOutputs();
+    }
+  }
+
+  function recordSubmittedPrompt(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    submittedPromptId.current += 1;
+    setSubmittedPrompt({ id: submittedPromptId.current, text: trimmed });
+  }
+
+  async function launch(action: string, prompt?: string, promptEcho?: string) {
+    if (launchInFlight.current) return;
+    launchInFlight.current = true;
     setLaunching(true);
     setJobMessage(null);
-    const promptToRun = prompt ?? (phaseInstruction.trim() || defaultPhasePrompt(project));
+    const userPrompt = phaseInstruction.trim();
+    const promptToRun = prompt ?? (userPrompt || defaultPhasePrompt(project));
+    const echoText = promptEcho ?? (userPrompt || `Run ${project.phase_label}.`);
+    recordSubmittedPrompt(echoText);
     try {
       const result = await startPhaseJob(project, action, promptToRun);
-      setActiveJobId(result.job_id);
       if (result.requires_approval) {
-        setPendingApprovalPrompt(promptToRun);
-        setApproval(result);
+        setPendingApproval({ result, action, prompt: promptToRun });
       } else {
-        setPendingApprovalPrompt(null);
+        setPendingApproval(null);
         setPhaseInstruction("");
-        setJobMessage(`Job ${result.job_id} ${result.status}`);
+        beginTrackingJob(result);
       }
+    } catch (err) {
+      setJobMessage(err instanceof Error ? err.message : "Failed to start the phase job.");
     } finally {
+      launchInFlight.current = false;
       setLaunching(false);
+    }
+  }
+
+  function sendPrompt() {
+    void launch(`Continue ${project.phase_label}`);
+  }
+
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
+    event.preventDefault();
+    sendPrompt();
+  }
+
+  function handleJobStatus(_statusJobId: string, status: string) {
+    setActiveJobStatus(status);
+    if (TERMINAL_JOB_STATUSES.includes(status)) {
+      setJobRunning(false);
+      setJobMessage(jobStatusMessage(status));
+      refreshProjectOutputs();
+      return;
+    }
+    if (WAITING_JOB_STATUSES.includes(status)) {
+      setJobRunning(false);
+      setJobMessage(jobStatusMessage(status));
     }
   }
 
   async function skipPdfCompile() {
     await launch(
       "Skip PDF Compile",
-      `Run Rev2Agent ${project.phase_label} for ${project.project_dir}. Tectonic is not installed, so skip PDF compilation. Draft or update the LaTeX manuscript sources, keep references consistent, and tell the user to install Tectonic before rerunning PDF compilation.`
+      `Run Rev2Agent ${project.phase_label} for ${project.project_dir}. Tectonic is not installed, so skip PDF compilation. Draft or update the LaTeX manuscript sources, keep references consistent, and tell the user to install Tectonic before rerunning PDF compilation.`,
+      "Skip PDF compilation and continue drafting."
     );
   }
 
@@ -449,44 +671,85 @@ function PhaseDashboard({
     }
   }
 
-  async function approveJob(result: PhaseJobResult) {
-    await submitJobApproval(result.job_id, "approved");
-    const continued = await continueJob(
-      result.job_id,
-      "Run experiment scripts",
-      pendingApprovalPrompt ?? `Approved high-risk action for ${project.project_dir}`
-    );
-    setActiveJobId(continued.job_id);
-    setApproval(null);
-    setPendingApprovalPrompt(null);
-    setPhaseInstruction("");
-    setJobMessage(`Job ${continued.job_id} ${continued.status}`);
+  async function approveJob() {
+    if (!pendingApproval || approvalBusy) return;
+    setApprovalBusy(true);
+    try {
+      await submitJobApproval(pendingApproval.result.job_id, "approved");
+      // Continue with the exact action and prompt the user approved.
+      const continued = await continueJob(
+        pendingApproval.result.job_id,
+        pendingApproval.action,
+        pendingApproval.prompt
+      );
+      setPendingApproval(null);
+      setPhaseInstruction("");
+      beginTrackingJob(continued);
+    } catch (err) {
+      setJobMessage(err instanceof Error ? err.message : "Failed to approve the job.");
+      setPendingApproval(null);
+    } finally {
+      setApprovalBusy(false);
+    }
   }
 
-  function rejectApproval() {
-    setApproval(null);
-    setPendingApprovalPrompt(null);
+  async function rejectApproval() {
+    if (!pendingApproval || approvalBusy) return;
+    setApprovalBusy(true);
+    try {
+      await submitJobApproval(pendingApproval.result.job_id, "rejected");
+      setJobMessage(jobStatusMessage("rejected"));
+    } catch (err) {
+      setJobMessage(err instanceof Error ? err.message : "Failed to reject the job.");
+    } finally {
+      setApprovalBusy(false);
+      setPendingApproval(null);
+    }
   }
+
+  const canStopJob =
+    activeJobId !== null && activeJobStatus !== null && !TERMINAL_JOB_STATUSES.includes(activeJobStatus);
 
   async function interruptActiveJob() {
     if (!activeJobId) return;
-    const result = await interruptJob(activeJobId);
-    setJobMessage(`Job ${result.job_id} ${result.interrupted ? "interrupted" : "could not be interrupted"}`);
+    try {
+      const result = await interruptJob(activeJobId);
+      if (result.interrupted) {
+        setActiveJobStatus("interrupted");
+        setJobRunning(false);
+      }
+      setJobMessage(
+        result.interrupted
+          ? jobStatusMessage("interrupted")
+          : "Rev2Agent could not be stopped. It may already have finished."
+      );
+    } catch (err) {
+      setJobMessage(err instanceof Error ? err.message : "Failed to interrupt the job.");
+    }
   }
+
+  useEffect(() => {
+    if (!autoStart || setupRequired || project.phase !== 1) return;
+    if (autoStartedProjectDir.current === project.project_dir) return;
+    autoStartedProjectDir.current = project.project_dir;
+    onAutoStartConsumed();
+    void launch(
+      `Continue ${project.phase_label}`,
+      undefined,
+      project.topic ? `Research idea: ${project.topic}` : `Start ${project.phase_label}.`
+    );
+    // Auto-start is intentionally tied to the project identity, not to each
+    // render of the launch helper.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, setupRequired, project.project_dir, project.phase]);
 
   return (
     <section className="dashboard">
-      <div className="panel phase-panel">
+      <section className="panel phase-panel" aria-label="Current step">
         <div className="phase-title">
-          <div>
-            <p className="eyebrow">{project.project_dir}</p>
-            <h2>Step Details</h2>
-          </div>
+          <h2>{project.phase_label}</h2>
           <StatusChip label={project.phase_status} tone="ok" />
         </div>
-        <p className="plain-copy">
-          Rev2Agent will run this step through a Codex SDK phase thread and preserve project state in the project folder.
-        </p>
         {project.topic ? (
           <p className="project-topic">
             <strong>Research idea</strong>
@@ -496,13 +759,24 @@ function PhaseDashboard({
         {setupRequired ? (
           <p className="warning-text">Complete Phase 0 setup in Settings before running project steps.</p>
         ) : null}
+        <LiveRunConsole
+          key={project.project_dir}
+          projectDir={project.project_dir}
+          jobId={activeJobId}
+          runToken={runToken}
+          running={jobRunning}
+          submittedPrompt={submittedPrompt}
+          embedded
+          onJobStatus={handleJobStatus}
+        />
         <div className="phase-instruction-form">
-          <label htmlFor="phase-instruction">Phase instruction</label>
+          <label htmlFor="phase-instruction">Prompt</label>
           <textarea
             id="phase-instruction"
             value={phaseInstruction}
             onChange={(event) => setPhaseInstruction(event.target.value)}
-            placeholder="Optional: add a specific instruction for this run, such as a short smoke experiment or a user answer."
+            onKeyDown={handlePromptKeyDown}
+            placeholder="Answer Rev2Agent's latest question or add instructions for the next run."
             rows={4}
           />
         </div>
@@ -543,46 +817,40 @@ function PhaseDashboard({
         <div className="action-row">
           <button
             className="primary-button"
-            onClick={() => launch(`Continue ${project.phase_label}`)}
+            onClick={sendPrompt}
             disabled={launching || setupRequired}
           >
             <Play aria-hidden="true" size={18} />
-            Run Next Step
+            Send
           </button>
-          <button
-            className="secondary-button"
-            onClick={() => launch("Run experiment scripts")}
-            disabled={launching || !canRunExperimentScripts}
-          >
-            <Play aria-hidden="true" size={18} />
-            Run Experiment Scripts
-          </button>
-          <button className="secondary-button" onClick={interruptActiveJob} disabled={!activeJobId || launching}>
+          <button className="secondary-button" onClick={interruptActiveJob} disabled={!canStopJob}>
             <Square aria-hidden="true" size={18} />
             Stop
           </button>
-          <button className="secondary-button" onClick={onArtifacts}>
-            <Files aria-hidden="true" size={18} />
-            View Files
-          </button>
         </div>
         {jobMessage ? <p className="job-message">{jobMessage}</p> : null}
-        {approval ? (
-          <ApprovalDialog approval={approval} onApprove={() => approveJob(approval)} onReject={rejectApproval} />
+        {pendingApproval ? (
+          <ApprovalDialog
+            approval={pendingApproval.result}
+            busy={approvalBusy}
+            onApprove={approveJob}
+            onReject={rejectApproval}
+          />
         ) : null}
-      </div>
-      <LiveRunConsole jobId={activeJobId} />
-      <LatestArtifactPreview project={project} onArtifacts={onArtifacts} />
+      </section>
+      <LatestArtifactPreview project={project} refreshToken={artifactRefreshToken} onArtifacts={onArtifacts} />
     </section>
   );
 }
 
 function ApprovalDialog({
   approval,
+  busy,
   onApprove,
   onReject
 }: {
   approval: PhaseJobResult;
+  busy: boolean;
   onApprove: () => void;
   onReject: () => void;
 }) {
@@ -602,10 +870,10 @@ function ApprovalDialog({
           </div>
         </dl>
         <div className="action-row">
-          <button className="secondary-button" onClick={onReject}>
+          <button className="secondary-button" onClick={onReject} disabled={busy}>
             Reject
           </button>
-          <button className="primary-button" onClick={onApprove}>
+          <button className="primary-button" onClick={onApprove} disabled={busy}>
             Approve High-Risk Action
           </button>
         </div>
@@ -614,54 +882,352 @@ function ApprovalDialog({
   );
 }
 
-function LiveRunConsole({ jobId }: { jobId: string | null }) {
-  const [events, setEvents] = useState<RunEvent[]>([]);
+interface ConsoleEvent extends RunEvent {
+  isDeltaAccumulator?: boolean;
+  displayRole?: "assistant" | "user" | "notice" | "error" | "status";
+}
+
+const MAX_CONSOLE_EVENTS = 300;
+const CONSOLE_HISTORY_PREFIX = "rev2agent.console.";
+
+function formatElapsedTime(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function consoleHistoryKey(projectDir: string) {
+  return `${CONSOLE_HISTORY_PREFIX}${projectDir}`;
+}
+
+function readConsoleHistory(projectDir: string): ConsoleEvent[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.sessionStorage.getItem(consoleHistoryKey(projectDir));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (event): event is ConsoleEvent =>
+          event &&
+          typeof event === "object" &&
+          typeof event.event_type === "string" &&
+          typeof event.summary === "string"
+      )
+      .slice(-MAX_CONSOLE_EVENTS);
+  } catch {
+    return [];
+  }
+}
+
+function writeConsoleHistory(projectDir: string, events: ConsoleEvent[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(consoleHistoryKey(projectDir), JSON.stringify(events.slice(-MAX_CONSOLE_EVENTS)));
+  } catch {
+    // Console history is a convenience; storage failures should not break runs.
+  }
+}
+
+function isAgentMessageEventType(eventType: string) {
+  const compact = eventType.toLowerCase().replace(/[-_/]/g, "");
+  return compact.includes("agentmessage") || compact.includes("assistantmessage");
+}
+
+function rawPayloadLooksLikeAssistantMessage(event: RunEvent) {
+  const rawPayload = event.raw_payload_json?.toLowerCase() ?? "";
+  return rawPayload.includes("agentmessagethreaditem") || rawPayload.includes("assistantmessage");
+}
+
+function normalizeAssistantText(text: string) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\u2018|\u2019/g, "'")
+    .replace(/\u201c|\u201d/g, '"')
+    .trim();
+}
+
+function isOperationalAssistantLine(line: string) {
+  const normalized = normalizeAssistantText(line).toLowerCase();
+  return [
+    "job completed but the project state did not change",
+    "run finished. rev2agent is waiting",
+    "using `systematic-debugging`",
+    "using systematic-debugging",
+    "i'll use the `using-superpowers` skill",
+    "i'll use the using-superpowers skill",
+    "i found the local phase",
+    "i'm updating only",
+    "timestamp command used",
+    "powershell option not available",
+    "i'm editing only the research state",
+    "the state update is in place",
+    "recorded:",
+    "root cause is powershell",
+    "no phase transition yet"
+  ].some((phrase) => normalized.includes(phrase));
+}
+
+function extractUserQuestion(text: string) {
+  const lines = normalizeAssistantText(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const questionStart = lines.findIndex((line) =>
+    /^next\s+(?:phase\s+\d+\s+)?(?:interview\s+)?question\s*:/i.test(line)
+  );
+  if (questionStart < 0) return null;
+
+  const questionLines: string[] = [];
+  for (let index = questionStart; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (index > questionStart && isOperationalAssistantLine(line)) break;
+    questionLines.push(line);
+  }
+  return questionLines.join("\n").trim() || null;
+}
+
+function userFacingAssistantSummary(summary: string) {
+  const normalized = normalizeAssistantText(summary);
+  const question = extractUserQuestion(normalized);
+  if (question) return question;
+  if (isOperationalAssistantLine(normalized)) return null;
+  if (/^(got it|question|next question)\s*:/i.test(normalized)) return normalized;
+  if (/\?\s*$/.test(normalized)) return normalized;
+  return normalized;
+}
+
+function toDisplayConsoleEvent(event: RunEvent): ConsoleEvent | null {
+  const eventType = event.event_type || "";
+  const normalizedType = eventType.toLowerCase();
+  const isAgentDelta = normalizedType.includes("delta") && isAgentMessageEventType(eventType);
+  if (isAgentDelta) {
+    return { ...event, displayRole: "assistant", isDeltaAccumulator: true };
+  }
+
+  const trimmedSummary = event.summary.trim();
+  if (!trimmedSummary) return null;
+
+  if (
+    normalizedType === "assistant_message" ||
+    (!normalizedType.includes("delta") && isAgentMessageEventType(eventType)) ||
+    (normalizedType === "item/completed" && rawPayloadLooksLikeAssistantMessage(event))
+  ) {
+    const displaySummary = userFacingAssistantSummary(trimmedSummary);
+    if (!displaySummary) return null;
+    return { ...event, summary: displaySummary, displayRole: "assistant" };
+  }
+
+  if (normalizedType === "completion_warning" || normalizedType === "interrupt_note") {
+    return null;
+  }
+
+  if (["error", "failed", "cancelled", "stream_error"].includes(normalizedType)) {
+    return { ...event, summary: trimmedSummary, displayRole: "error" };
+  }
+
+  return null;
+}
+
+function appendEventToConsole(current: ConsoleEvent[], event: ConsoleEvent) {
+  if (event.isDeltaAccumulator) {
+    const last = current[current.length - 1];
+    if (last?.isDeltaAccumulator) {
+      return [...current.slice(0, -1), { ...last, summary: last.summary + event.summary }].slice(-MAX_CONSOLE_EVENTS);
+    }
+    return [...current, event].slice(-MAX_CONSOLE_EVENTS);
+  }
+
+  const last = current[current.length - 1];
+  const base = event.displayRole === "assistant" && last?.isDeltaAccumulator ? current.slice(0, -1) : current;
+  return [...base, event].slice(-MAX_CONSOLE_EVENTS);
+}
+
+function LiveRunConsole({
+  projectDir,
+  jobId,
+  runToken,
+  running,
+  submittedPrompt,
+  embedded = false,
+  onJobStatus
+}: {
+  projectDir: string;
+  jobId: string | null;
+  runToken: number;
+  running: boolean;
+  submittedPrompt: SubmittedPrompt | null;
+  embedded?: boolean;
+  onJobStatus: (jobId: string, status: string) => void;
+}) {
+  const [events, setEvents] = useState<ConsoleEvent[]>(() => readConsoleHistory(projectDir));
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const listRef = useRef<HTMLOListElement | null>(null);
+  const onJobStatusRef = useRef(onJobStatus);
+  onJobStatusRef.current = onJobStatus;
+
+  function appendDisplayEvent(event: ConsoleEvent) {
+    setEvents((current) => appendEventToConsole(current, event));
+  }
+
+  function appendConsoleEvent(parsed: RunEvent) {
+    const displayEvent = toDisplayConsoleEvent(parsed);
+    if (!displayEvent) return;
+    appendDisplayEvent(displayEvent);
+  }
+
+  function clearConsole() {
+    setEvents([]);
+  }
 
   useEffect(() => {
-    if (!jobId) {
-      setEvents([]);
-      return;
+    setElapsedSeconds(0);
+  }, [projectDir]);
+
+  useEffect(() => {
+    writeConsoleHistory(projectDir, events);
+  }, [events, projectDir]);
+
+  useEffect(() => {
+    if (!submittedPrompt) return;
+    appendDisplayEvent({
+      event_type: "user_prompt",
+      summary: `You: ${submittedPrompt.text}`,
+      displayRole: "user"
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submittedPrompt?.id]);
+
+  useEffect(() => {
+    setElapsedSeconds(0);
+    if (!jobId) return;
+
+    const currentJobId = jobId;
+    // The browser may reconnect and replay events; track ids so each shows once.
+    const seenEventIds = new Set<number>();
+    let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let done = false;
+    const startedAt = Date.now();
+
+    const elapsedTimer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    // Poll fallback: if the SSE stream is lost, job completion is still noticed.
+    const pollTimer = setInterval(() => {
+      getJob(currentJobId)
+        .then((job) => {
+          if (TERMINAL_JOB_STATUSES.includes(job.status)) finish(job.status);
+        })
+        .catch(() => {
+          // Polling is a fallback; ignore transient failures and retry next tick.
+        });
+    }, 5000);
+
+    function finish(status: string) {
+      if (done) return;
+      done = true;
+      source?.close();
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      clearInterval(pollTimer);
+      clearInterval(elapsedTimer);
+      void drainTailEventsThenNotify(status);
     }
 
-    setEvents([]);
-    const source = new EventSource(`/api/jobs/${jobId}/events/stream`);
-    const addEvent = (event: MessageEvent) => {
+    async function drainTailEventsThenNotify(status: string) {
       try {
-        const parsed = JSON.parse(event.data) as RunEvent;
-        setEvents((current) => [...current, parsed]);
+        // Tail events (completion_warning, interrupt_note, error) can be
+        // written during finalization after the stream closes; fetch and
+        // render any the stream missed before reporting the final status.
+        const remaining = await listJobEvents(currentJobId);
+        for (const event of remaining) {
+          if (typeof event.event_id === "number") {
+            if (seenEventIds.has(event.event_id)) continue;
+            seenEventIds.add(event.event_id);
+          }
+          appendConsoleEvent(event);
+        }
       } catch {
-        setEvents((current) => [
-          ...current,
-          { event_type: "stream_error", summary: "A job event could not be displayed." }
-        ]);
+        // The drain is best-effort; the status notification must still fire.
       }
+      onJobStatusRef.current(currentJobId, status);
+    }
+
+    function connect() {
+      if (done) return;
+      const nextSource = new EventSource(`/api/jobs/${encodeURIComponent(currentJobId)}/events/stream`);
+      source = nextSource;
+      nextSource.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data) as RunEvent;
+          if (parsed.event_type === "job_status") {
+            if (parsed.status) {
+              finish(parsed.status);
+            } else {
+              nextSource.close();
+            }
+            return;
+          }
+          if (typeof parsed.event_id === "number") {
+            if (seenEventIds.has(parsed.event_id)) return;
+            seenEventIds.add(parsed.event_id);
+          }
+          appendConsoleEvent(parsed);
+        } catch {
+          appendDisplayEvent({
+            event_type: "stream_error",
+            summary: "A job event could not be displayed.",
+            displayRole: "error"
+          });
+        }
+      };
+      nextSource.onerror = () => {
+        // The dev-server proxy answers 502 while the backend restarts; the browser
+        // EventSource then gives up permanently, so reconnect manually.
+        if (nextSource.readyState === EventSource.CLOSED) {
+          nextSource.close();
+          reconnectTimer = setTimeout(connect, 2000);
+        }
+      };
+    }
+    connect();
+
+    return () => {
+      done = true;
+      source?.close();
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      clearInterval(pollTimer);
+      clearInterval(elapsedTimer);
     };
+  }, [jobId, runToken]);
 
-    [
-      "message",
-      "job_started",
-      "thread_started",
-      "turn_completed",
-      "job_completed",
-      "approval_required",
-      "approval_approved",
-      "job_interrupted",
-      "error"
-    ].forEach((eventName) => source.addEventListener(eventName, addEvent));
-
-    return () => source.close();
-  }, [jobId]);
+  useEffect(() => {
+    const list = listRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [events]);
 
   return (
-    <section className="panel console-panel" aria-label="Live run console">
-      <div className="panel-heading">
-        <Terminal aria-hidden="true" size={18} />
-        <h2>Live Run Console</h2>
+    <section
+      className={embedded ? "console-panel embedded-console-panel" : "panel console-panel"}
+      aria-label="Live run console"
+    >
+      <div className="section-toolbar console-toolbar">
+        <div className="panel-heading">
+          <Terminal aria-hidden="true" size={18} />
+          <h2>Live Run Console</h2>
+          {running ? <span className="elapsed-label">{formatElapsedTime(elapsedSeconds)}</span> : null}
+        </div>
+        <button className="secondary-button compact-button" type="button" onClick={clearConsole} disabled={events.length === 0}>
+          <Trash2 aria-hidden="true" size={16} />
+          Clear
+        </button>
       </div>
-      <ol className="event-list">
+      <ol className="event-list" ref={listRef}>
         {events.length > 0 ? (
           events.map((event, index) => (
-            <li key={`${event.event_id ?? event.event_type}-${index}`}>
+            <li className={event.displayRole ? `console-event ${event.displayRole}` : "console-event"} key={`${event.event_id ?? event.event_type}-${index}`}>
               <span className="event-dot" />
               {event.summary}
             </li>
@@ -669,7 +1235,7 @@ function LiveRunConsole({ jobId }: { jobId: string | null }) {
         ) : (
           <li>
             <span className="event-dot" />
-            {jobId ? "Listening for job events." : "Waiting for a phase job to start."}
+            {jobId ? "Listening for job events." : "No conversation yet. Run a step to start."}
           </li>
         )}
       </ol>
@@ -679,9 +1245,11 @@ function LiveRunConsole({ jobId }: { jobId: string | null }) {
 
 function LatestArtifactPreview({
   project,
+  refreshToken,
   onArtifacts
 }: {
   project: ProjectSummary;
+  refreshToken: number;
   onArtifacts: () => void;
 }) {
   const [latestArtifact, setLatestArtifact] = useState<ArtifactRecord | null>(null);
@@ -716,7 +1284,7 @@ function LatestArtifactPreview({
     return () => {
       alive = false;
     };
-  }, [project]);
+  }, [project, refreshToken]);
 
   return (
     <section className="panel latest-artifact-panel" aria-label="Latest artifact preview">
@@ -766,6 +1334,9 @@ function ArtifactBrowser({ project }: { project: ProjectSummary }) {
       .then((items) => {
         if (alive) setArtifacts(items);
       })
+      .catch((err: unknown) => {
+        if (alive) setToolMessage(err instanceof Error ? err.message : "Failed to load artifacts.");
+      })
       .finally(() => {
         if (alive) setLoadingArtifacts(false);
       });
@@ -775,7 +1346,11 @@ function ArtifactBrowser({ project }: { project: ProjectSummary }) {
   }, [project]);
 
   async function openArtifact(artifact: ArtifactRecord) {
-    setPreview(await readArtifact(project, artifact.artifact_id));
+    try {
+      setPreview(await readArtifact(project, artifact.artifact_id));
+    } catch (err) {
+      setToolMessage(err instanceof Error ? err.message : "Failed to read the artifact.");
+    }
   }
 
   function selectArtifactTab(tab: (typeof ARTIFACT_TABS)[number]["label"]) {
@@ -783,16 +1358,30 @@ function ArtifactBrowser({ project }: { project: ProjectSummary }) {
     setPreview(null);
   }
 
+  function describeToolResult(label: string, result: ProjectToolResult) {
+    if (result.status !== "failed") return `${label} ${result.status}`;
+    const detail = (result.stderr || result.stdout || "").trim().slice(0, 400);
+    return detail ? `${label} failed: ${detail}` : `${label} failed`;
+  }
+
   async function runCollectResults() {
-    const result = await collectResults(project);
-    if (result.artifacts) setArtifacts(result.artifacts);
-    setToolMessage(`Result collection ${result.status}`);
+    try {
+      const result = await collectResults(project);
+      if (result.artifacts) setArtifacts(result.artifacts);
+      setToolMessage(describeToolResult("Result collection", result));
+    } catch (err) {
+      setToolMessage(err instanceof Error ? err.message : "Failed to collect results.");
+    }
   }
 
   async function runValidateManuscript() {
-    const result = await validateManuscript(project);
-    if (result.artifacts) setArtifacts(result.artifacts);
-    setToolMessage(`Manuscript validation ${result.status}`);
+    try {
+      const result = await validateManuscript(project);
+      if (result.artifacts) setArtifacts(result.artifacts);
+      setToolMessage(describeToolResult("Manuscript validation", result));
+    } catch (err) {
+      setToolMessage(err instanceof Error ? err.message : "Failed to validate the manuscript.");
+    }
   }
 
   const activeTabConfig = ARTIFACT_TABS.find((tab) => tab.label === activeTab) ?? ARTIFACT_TABS[0];
@@ -930,9 +1519,13 @@ function SettingsSafety({
 
   useEffect(() => {
     let alive = true;
-    getSettings().then((status) => {
-      if (alive) setSettings(status);
-    });
+    getSettings()
+      .then((status) => {
+        if (alive) setSettings(status);
+      })
+      .catch((err: unknown) => {
+        if (alive) setSetupError(err instanceof Error ? err.message : "Failed to load environment checks.");
+      });
     return () => {
       alive = false;
     };
