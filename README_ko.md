@@ -1,5 +1,7 @@
 [English](README.md)
 
+> 🔗 **Threads에서 오셨나요?** 설치 없이 Claude 채팅에 복붙해서 쓰는 [스레드용 간이 프롬프트](스레드용_간이_프롬프트.md)를 확인하세요.
+
 <p align="center">
   <img src="logo.png" alt="Rev2Agent" width="360">
 </p>
