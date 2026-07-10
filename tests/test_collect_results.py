@@ -488,6 +488,23 @@ class TestMalformedInputs(unittest.TestCase):
             self.assertEqual(collected["entries"], [])
             self.assertEqual(len(collected["warnings"]), 4)
 
+    def test_overflow_infinity_rejects_the_entire_mixed_metric_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            (tdir / "overflow.json").write_text(
+                json.dumps({"_meta": complete_meta()})[:-1]
+                + ', "accuracy": 0.9, "loss": 1e999}',
+                encoding="utf-8",
+            )
+
+            collected = cr.collect_results(tdir)
+            self.assertEqual(collected["entries"], [])
+            self.assertEqual(collected["aggregates"], [])
+            self.assertTrue(
+                any("non-finite" in warning for warning in collected["warnings"]),
+                collected["warnings"],
+            )
+
     def test_json_named_directory_and_read_errors_warn_without_crashing(self):
         with tempfile.TemporaryDirectory() as td:
             tdir = Path(td)

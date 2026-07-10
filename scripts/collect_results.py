@@ -73,12 +73,10 @@ def extract_metrics_flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, fl
         if key.startswith("_"):
             continue
         full_key = f"{prefix}.{key}" if prefix else key
-        if isinstance(val, (int, float)) and not isinstance(val, bool):
-            try:
-                finite = math.isfinite(val)
-            except (OverflowError, TypeError):
-                finite = False
-            if finite:
+        if isinstance(val, int) and not isinstance(val, bool):
+            metrics[full_key] = val
+        elif isinstance(val, float):
+            if math.isfinite(val):
                 metrics[full_key] = val
         elif isinstance(val, dict):
             metrics.update(extract_metrics_flat(val, full_key))
@@ -215,6 +213,23 @@ def extract_meta(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
 def reject_json_constant(value: str) -> None:
     """Reject NaN and infinities, which are not valid RFC 8259 JSON."""
     raise ValueError(f"non-standard numeric constant {value}")
+
+
+def find_non_finite_number(value: Any, path: str = "$") -> Optional[str]:
+    """Return the JSON path of the first non-finite parsed float, if any."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return path
+    if isinstance(value, dict):
+        for key, child in value.items():
+            found = find_non_finite_number(child, f"{path}.{key}")
+            if found:
+                return found
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found = find_non_finite_number(child, f"{path}[{index}]")
+            if found:
+                return found
+    return None
 
 
 def aggregate_seeds(
@@ -369,6 +384,13 @@ def collect_results(
             )
         except (json.JSONDecodeError, UnicodeDecodeError, OSError, ValueError) as e:
             warnings.append(f"Cannot parse {rel_path}: {e}")
+            continue
+
+        non_finite_path = find_non_finite_number(data)
+        if non_finite_path:
+            warnings.append(
+                f"Skipped {rel_path}: non-finite number at {non_finite_path}"
+            )
             continue
 
         if not isinstance(data, dict):
