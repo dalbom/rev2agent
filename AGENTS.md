@@ -234,9 +234,7 @@ Where shared prompts refer to starting a new session, interpret that as:
 
 ### External Models
 
-External LLM providers and models are configured during Phase 0. `.rev2agent_config.json` stores only each provider's `api_key_env` environment-variable name, never its credential value. External discussion models may be used, with the Phase 0 disclosure, for:
-- `major revision` discussions
-- stuck or ambiguous research decisions
+External LLM providers and models are configured during Phase 0. `.rev2agent_config.json` stores only each provider's `api_key_env` environment-variable name, never its credential value. External discussion models may receive research context only when the user explicitly triggers `major revision`, under the Phase 0 disclosure. Ad-hoc research decisions use host-native reviewers.
 
 Experiment-code verification is separate. Full code may leave the host only when `external_code_review` is the JSON boolean exactly `true`, `roles.verification` selects a configured external provider/model, and that provider's `api_key_env` is present. A missing, false, or invalid setting means false and requires a host-native adversarial reviewer. Never send code externally in that fallback. Routine file editing, script execution, and status work do not require external models.
 

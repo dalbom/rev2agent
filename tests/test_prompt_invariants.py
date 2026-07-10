@@ -617,6 +617,23 @@ class TestCredentialAndCodeEgressSafety(unittest.TestCase):
                 self.assertIn("external_code_review", text)
                 self.assertNotIn("| 0 | Setup | Direct | API keys |", text)
 
+    def test_external_research_discussion_requires_disclosed_major_revision(self):
+        self.assertIn("explicitly requested", self.setup)
+        self.assertIn("major revision", self.setup)
+        for entrypoint in ("AGENTS.md", "CLAUDE.md"):
+            with self.subTest(entrypoint=entrypoint):
+                text = read(entrypoint)
+                external_section = between(
+                    text,
+                    "### External Models" if entrypoint == "AGENTS.md" else "### External LLM APIs",
+                    '## "Major Revision" Trigger' if entrypoint == "AGENTS.md" else "### Shared Prompt Compatibility",
+                )
+                self.assertNotRegex(
+                    external_section,
+                    re.compile(r"stuck|ambiguous", re.IGNORECASE),
+                )
+                self.assertIn("major revision", external_section.lower())
+
     def test_phase5_external_code_review_requires_exact_opt_in_and_env(self):
         step1 = between(
             self.phase5,

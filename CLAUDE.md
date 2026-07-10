@@ -228,8 +228,9 @@ External LLM providers and models are configured during Phase 0. `.rev2agent_con
 
 **When to use external models:**
 - When the user says **"major revision"** — convenes the full multi-model discussion panel.
-- When stuck on a research direction and want an independent assessment.
 - For experiment code verification only when the separate privacy gate below passes.
+
+Outside the privacy-gated code-review path, external models may receive research context only during an explicitly requested `major revision`. Ad-hoc research decisions use host-native reviewers.
 
 **When NOT to use external models:** Routine tasks (file editing, running scripts, status checks), or when Claude agents alone provide sufficient diversity.
 
