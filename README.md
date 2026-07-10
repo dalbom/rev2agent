@@ -32,7 +32,7 @@ When you're stuck, type **`major revision`**. Rev2Agent convenes a discussion pa
 - Runs as markdown instructions only -- no framework, no build step; supports both Claude Code and Codex
 - Tracks all research directions in a persistent roadmap -- nothing gets lost between rounds
 - `major revision` convenes host-native reviewers plus external models to debate research decisions
-- External model cross-checks experiment code logic before you spend GPU hours on it
+- An independent reviewer cross-checks experiment logic before you spend GPU hours on it; code stays on-host by default
 - Every manuscript claim is tagged as fact, synthesis, or common knowledge -- no vague "studies show..."
 - Every BibTeX entry is verified against Crossref/DBLP/Semantic Scholar (LLMs fabricate ~30% of citations)
 - 5 AI reviewers with distinct personas critique the final draft before you submit
@@ -69,9 +69,11 @@ Each project lives in its own directory with a `.research_state.json` file that 
 
 These are not required. Rev2Agent works without them, but each one improves a specific part of the pipeline.
 
-**External LLM API keys** -- for multi-model discussions and independent code verification
+**External LLM access** -- optional, for multi-model discussions
 
-Paste your keys during Phase 0 setup. Rev2Agent auto-detects the provider from the key prefix. Supported providers include OpenRouter, Google AI Studio, OpenAI, xAI, Anthropic, and any OpenAI-compatible endpoint.
+Set provider credentials as an environment variable before starting Rev2Agent, then give Phase 0 only the provider name. Do not paste credential values into chat. Supported references include `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `XAI_API_KEY`, `ANTHROPIC_API_KEY`, and custom OpenAI-compatible providers.
+
+External code review is disabled by default. Experiment logic is reviewed by a host-native adversarial reviewer unless you explicitly opt in after the code-egress disclosure. Enabling external discussion models does not enable source-code upload.
 
 **Wrapper skills** -- shared prompts refer to host-neutral wrapper skill names, which each host maps to its own capabilities. Rev2Agent falls back gracefully if a host or skill is unavailable.
 
@@ -105,7 +107,7 @@ That's it. Rev2Agent handles the rest.
 
 | Command | What it does |
 |---------|-------------|
-| <nobr>`major revision`</nobr> | Multi-model discussion panel (external models + host-native reviewers, requires API keys from Phase 0 for external models) |
+| <nobr>`major revision`</nobr> | Discussion panel (configured external models + host-native reviewers; external credentials come from environment references) |
 | `reconfigure` | Re-run Phase 0 setup |
 
 ## The Reviewer 2 Persona
@@ -120,7 +122,7 @@ At phase transitions and result assessments, the agent speaks as Reviewer 2. It 
 |---|---|---|
 | Architecture | Markdown prompts only, no framework | Custom frameworks or SDKs |
 | Iteration | Multi-round with persistent roadmap | Single-pass or manual re-runs |
-| Code verification | External model cross-checks experiment logic | None or linter-level |
+| Code verification | Independent adversarial review; host-native by default | None or linter-level |
 | Citation integrity | Every reference web-verified | LLM-generated BibTeX (often wrong) |
 | Manuscript safeguards | Fact/synthesis tagging, no vague attributions | No systematic checks |
 | Review | 5-persona simulated peer review | None or single-pass |

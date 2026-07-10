@@ -59,7 +59,7 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
 **Every time this session starts, do the following FIRST:**
 
-0. **Check setup**: If `.rev2agent_config.json` does not exist at the repository root, run Phase 0 by reading `prompts/00_setup.md`. This only happens once — subsequent sessions skip this step.
+0. **Check setup and security schema**: Before project discovery, read only the structure of `.rev2agent_config.json`. Run Phase 0 from `prompts/00_setup.md` if the file is missing, its `version` is not `2`, it contains a legacy `api_key` value field, or required version-2 privacy fields are invalid. Never use a legacy value. Normal startup continues only after safe migration.
 1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`. If `_new_project_draft/` exists, an interview was interrupted — offer to resume it or discard the draft (see `prompts/01_interview.md`).
 2. **If no projects exist** → Begin at Phase 1 (Topic Interview).
 3. **If projects exist** → List them with a brief status summary and ask the user:
@@ -72,19 +72,22 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
    Would you like to resume one of these, or start a new project?
    ```
-4. **If resuming** → Follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, read that project's `.research_state.json`, determine current phase and status, then:
-   - `not_started` → read that phase's prompt file and begin the phase.
-   - `in_progress` → check whether the process is still running; update state accordingly.
-   - `waiting_for_user` → re-present the summary and ask for confirmation.
-   - `completed` → advance to the next phase.
-   - `failed` → diagnose the failure and propose recovery options.
+4. **If resuming** → Read that project's `.research_state.json`. **Check `project_status` before dispatching on `phase_status`** and before creating a session lock:
+   - If `project_status` is `"completed"`, report final artifacts and do not advance.
+   - If `project_status` is `"archived"`, report that it is archived and do not mutate or advance.
+   - Only when `project_status` is `"active"`, follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, then determine the current phase and dispatch on `phase_status`:
+      - `not_started` → read that phase's prompt file and begin the phase.
+      - `in_progress` → check whether the process is still running; update state accordingly.
+      - `waiting_for_user` → re-present the summary and ask for confirmation.
+      - `completed` → advance to the next phase.
+      - `failed` → diagnose the failure and propose recovery options.
 5. **If starting new** → Begin at Phase 1.
 
 ## Phase Overview
 
 | Phase | Name | Mode | User Input | Prompt File |
 |-------|------|------|-----------|-------------|
-| 0 | Setup | Direct | API keys | `prompts/00_setup.md` |
+| 0 | Setup | Direct | Provider names (optional) | `prompts/00_setup.md` |
 | 1 | Topic Interview | Direct | Conversational | `prompts/01_interview.md` |
 | 2 | Literature Search | Parallel Agents | Confirm topic | `prompts/02_literature_search.md` |
 | 3 | Research Plan | Direct | Confirm plan | `prompts/03_research_plan.md` |
@@ -125,13 +128,14 @@ Phase 4 (design) → Phase 5 (execute) → Phase 6 (analyze + plan next)
 
 **Phase 5 direct skip:** When Phase 6 determines that the next round requires NO design changes (identical config, just additional seeds or repetitions), it may route directly to Phase 5, skipping Phase 4. This is the only valid case for skipping Phase 4. The skip must be logged as a `phase4_skipped` event in `phase_history` (state-update details in `prompts/06_result_analysis.md`).
 
-**`sub_step` field:** When Phase 6 routes back to Phase 4, it sets `sub_step` to indicate the mode:
+**`sub_step` field:** Phase 6 uses `sub_step` to indicate its routing mode:
 - `null` — Normal experiment design for the next round
 - `"refinement"` — Evidence-driven refinement: review research question, positioning, and hypothesis before designing experiments (see `prompts/04_experiment_design.md` "Refinement Mode" section)
+- `"review_reentry"` — Phase 6-only persisted marker for review-driven round planning after Phase 8
 
 `sub_step` is reset to `null` when Phase 5 begins. The trigger criteria for `"refinement"` (mandatory after Round 1, 10+pp metric deviation, positioning change, confound discovery, default-config change) are owned by `prompts/06_result_analysis.md` — see its "When to set `sub_step: \"refinement\"`" section.
 
-**Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6, which skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
+**Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6 with `sub_step: "review_reentry"`; Phase 6 skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
 
 All file paths in prompt files use `{project_dir}/` as a prefix.
 
@@ -220,14 +224,17 @@ Long-running experiment agents must honor the kill flag, record PIDs, and run on
 
 ### External LLM APIs
 
-External LLM providers and models are configured during Phase 0 and stored in `.rev2agent_config.json`. Rev2Agent supports any OpenAI-compatible API provider and Google AI Studio. **If no external APIs are configured**, Rev2Agent still works — it uses Claude-only discussions with multiple agent perspectives.
+External LLM providers and models are configured during Phase 0. `.rev2agent_config.json` stores only provider `api_key_env` environment-variable names, never credential values. Rev2Agent supports OpenAI-compatible providers, Google AI Studio, and host-only mode.
 
 **When to use external models:**
 - When the user says **"major revision"** — convenes the full multi-model discussion panel.
-- When stuck on a research direction and want an independent assessment.
-- For experiment code verification (see Phase 5 "Code Verification Protocol").
+- For experiment code verification only when the separate privacy gate below passes.
+
+Outside the privacy-gated code-review path, external models may receive research context only during an explicitly requested `major revision`. Ad-hoc research decisions use host-native reviewers.
 
 **When NOT to use external models:** Routine tasks (file editing, running scripts, status checks), or when Claude agents alone provide sufficient diversity.
+
+**External code privacy gate:** full or partial unpublished source may leave the host only when `external_code_review` is the JSON boolean exactly `true`, `roles.verification` selects a configured external provider/model, and that provider's `api_key_env` is present. Missing, false, string-valued, or otherwise invalid settings mean false. Use a host-native adversarial reviewer and do not send code externally in every fallback case. Provider setup for discussion is not code-upload consent.
 
 ### Shared Prompt Compatibility
 
@@ -255,7 +262,7 @@ When the user types `major revision`, launch a multi-model discussion panel:
    gemini-3.1-pro-preview via Google AI Studio
    ```
 2. Spawn Claude agents (count from the `host_agents` setting configured in Phase 0, default: 3 — legacy configs may use the key `claude_agents`; each agent gets a distinct perspective).
-3. Query any external models configured in `.rev2agent_config.json`.
+3. Query configured external discussion models only when their `api_key_env` references are present and the Phase 0 research-content disclosure applies. This does not grant permission to send source code.
 4. Collect all responses, synthesize findings, present to the user.
 5. If no external models are configured, use Claude agents only.
 
@@ -267,7 +274,7 @@ Detailed protocols live with the phase that owns them. Do not duplicate here —
 |----------|---------------|
 | State schema, enums, round numbering, summary checklist, error recovery | `prompts/conventions.md` |
 | Refinement triggers (`sub_step: "refinement"` criteria) | `prompts/06_result_analysis.md` |
-| Experiment Code Verification (3-step, external model review) | `prompts/05_experiment_execution.md` |
+| Experiment Code Verification (3-step, privacy-gated reviewer) | `prompts/05_experiment_execution.md` |
 | Subagent Safety (kill flag, PID, single-agent rule) | `prompts/05_experiment_execution.md` |
 | Experiment Result File Convention (`_meta`, `INDEX.md`) | `prompts/05_experiment_execution.md` |
 | Config Drift Check | `prompts/06_result_analysis.md` |
@@ -278,13 +285,13 @@ Detailed protocols live with the phase that owns them. Do not duplicate here —
 | Evidence-Driven Refinement (research question re-review) | `prompts/04_experiment_design.md` (Refinement Mode) |
 | Manuscript Review Panel (5-reviewer simulation) | `prompts/08_manuscript_review.md` |
 
-**Global rule (applies to all phases):** LLMs hallucinate ~30% of citations. NEVER write BibTeX from memory. Every reference must be web-verified against DBLP / Crossref / Semantic Scholar / publisher before inclusion. The verification script (`scripts/verify_citations_bibtex.py`) cross-checks against Crossref (primary) and Semantic Scholar (fallback) for author/year/venue accuracy in addition to DOI resolution. Any entry with status `SUSPICIOUS` due to metadata mismatch must be corrected before the manuscript is presented to the user. See Phase 7 Step 4.1 for the full verification procedure.
+**Global rule (applies to all phases):** LLMs hallucinate ~30% of citations. NEVER write BibTeX from memory. Every reference must be web-verified against DBLP / Crossref / Semantic Scholar / publisher before inclusion. The verification script (`scripts/verify_citations_bibtex.py`) requires a nonempty title, at least one usable author, and a year from DOI, Crossref, or Semantic Scholar, with venue agreement when both records provide one. Incomplete source metadata is `UNVERIFIED`, and URL accessibility is not verification evidence. Any entry with status `SUSPICIOUS` due to metadata or structural mismatch must be corrected before the manuscript is presented to the user. See Phase 7 Step 4.1 for the full verification procedure.
 
 **Global rule (applies to Phase 6 and any phase that cites experiment results):** Run `scripts/collect_results.py` before making ANY numerical claim about experiment outcomes. The generated `comparison_table.json` is the single source of truth for all metrics. Numbers cited from memory or manual file reading are prohibited.
 
 **Global rule (applies to all phases):** LLMs also hallucinate plausible-sounding factual claims. Every numerical value in a manuscript must trace to a specific experiment result file — never written from memory. Every citation must name a specific source — never vague attributions like "studies show...". See Phase 7 Step 2 for the full anti-hallucination protocol.
 
-**Global rule (applies to any phase that writes Python scripts producing manuscript values):** Every such script must pass the 3-step **Code Verification Protocol** before execution: (1) external-model logical review of data flow and methodology, (2) `code-quality-review` pass, (3) syntax check + execution. This covers experiment scripts (Phase 5), analysis/statistical-test/figure generation scripts (Phase 6), and any figure re-run scripts (Phase 7). Step 1 is **not optional** for figure or analysis scripts that compute values at runtime — the Round 5 silent-failure incident was exactly that scenario (train features matched against val images). Full protocol in `prompts/05_experiment_execution.md`.
+**Global rule (applies to any phase that writes Python scripts producing manuscript values):** Every such script must pass the 3-step **Code Verification Protocol** before execution: (1) independent logical review of data flow and methodology, (2) `code-quality-review` pass, (3) syntax check + execution. Step 1 defaults to a host-native adversarial reviewer; an external reviewer is allowed only under Phase 5's `external_code_review` and `api_key_env` gate. This covers experiment scripts (Phase 5), analysis/statistical-test/figure generation scripts (Phase 6), and any figure re-run scripts (Phase 7). Step 1 is **not optional** for figure or analysis scripts that compute values at runtime — the Round 5 silent-failure incident was exactly that scenario. Full protocol in `prompts/05_experiment_execution.md`.
 
 ## Error Recovery
 
@@ -314,7 +321,7 @@ When the user returns and runs `claude` again:
 See the Directory Structure section at the top for file locations.
 
 **Scripts** (`scripts/` — used by prompts at designated quality gates):
-- `verify_citations_bibtex.py` — BibTeX verification: DOI resolution, Crossref + Semantic Scholar cross-check (author/year/venue), hallucination pattern detection
+- `verify_citations_bibtex.py` — BibTeX verification: DOI/Crossref/Semantic Scholar identity agreement (required title/author/year; venue when available), hallucination pattern detection
 - `source_evaluator.py` — source credibility scoring for literature search
 - `validate_manuscript.py` — LaTeX cross-ref, placeholder, figure validation
 - `collect_results.py` — automated experiment result collection with provenance tracking

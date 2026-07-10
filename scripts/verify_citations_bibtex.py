@@ -3,9 +3,10 @@
 BibTeX Citation Verification Script
 
 Adapted from deep-research verify_citations.py for LaTeX manuscript projects.
-Verifies BibTeX entries against DOI metadata, checks URL accessibility,
-cross-references .tex citations with .bib entries, and detects common
-LLM hallucination patterns in fabricated references.
+Verifies BibTeX entries by agreement with DOI, Crossref, or Semantic Scholar
+metadata; cross-references .tex citations with .bib entries; and detects
+common LLM hallucination patterns in fabricated references. BibTeX URLs are
+reported as informational fields and are never fetched as verification proof.
 
 Usage:
     python verify_citations_bibtex.py --bib references.bib --tex-dir sections/
@@ -325,25 +326,61 @@ def verify_doi(doi: str, retries: int = 3) -> Tuple[bool, Dict]:
                 data = json.loads(raw)
             except json.JSONDecodeError as e:
                 return False, {"error": f"invalid JSON from doi.org: {str(e)[:80]}"}
-            issued = data.get("issued", {}).get("date-parts", [[None]])
-            year = issued[0][0] if issued and issued[0] else None
-            authors = [
-                f"{a.get('family', '')} {a.get('given', '')}".strip()
-                for a in data.get("author", [])
-            ]
+            if not isinstance(data, dict):
+                data = {}
+
+            year = None
+            issued = data.get("issued")
+            if isinstance(issued, dict):
+                date_parts = issued.get("date-parts")
+                if (
+                    isinstance(date_parts, list)
+                    and date_parts
+                    and isinstance(date_parts[0], (list, tuple))
+                    and date_parts[0]
+                ):
+                    candidate_year = date_parts[0][0]
+                    if isinstance(candidate_year, int) and not isinstance(
+                        candidate_year, bool
+                    ):
+                        year = candidate_year
+                    elif (
+                        isinstance(candidate_year, str)
+                        and candidate_year.isascii()
+                        and candidate_year.isdigit()
+                    ):
+                        year = int(candidate_year)
+
+            authors = []
+            raw_authors = data.get("author", [])
+            if isinstance(raw_authors, list):
+                for author in raw_authors:
+                    if not isinstance(author, dict):
+                        continue
+                    given = author.get("given", "")
+                    family = author.get("family", "")
+                    given = given.strip() if isinstance(given, str) else ""
+                    family = family.strip() if isinstance(family, str) else ""
+                    name = f"{given} {family}".strip()
+                    if name:
+                        authors.append(name)
             return True, {
-                "title": data.get("title", ""),
+                "title": _optional_metadata_string(data.get("title", "")),
                 "year": year,
                 "authors": authors,
-                "venue": data.get("container-title", ""),
+                "venue": _optional_metadata_string(
+                    data.get("container-title", "")
+                ),
             }
         except error.HTTPError as e:
-            if e.code == 404:
+            code = e.code
+            e.close()
+            if code == 404:
                 return False, {"error": "DOI not found (404)"}
-            if e.code == 429 or e.code >= 500:
-                last_err = f"HTTP {e.code}"  # transient: retry
+            if code == 429 or code >= 500:
+                last_err = f"HTTP {code}"  # transient: retry
             else:
-                return False, {"error": f"HTTP {e.code}"}
+                return False, {"error": f"HTTP {code}"}
         except error.URLError as e:
             last_err = f"URL error: {e.reason}"
         except (TimeoutError, OSError) as e:
@@ -360,7 +397,10 @@ def verify_doi(doi: str, retries: int = 3) -> Tuple[bool, Dict]:
 
 def verify_url(url: str) -> Tuple[bool, str]:
     """
-    Check URL accessibility with a HEAD request.
+    Check URL accessibility with a HEAD request (compatibility helper only).
+
+    The full citation verifier deliberately does not call this helper because
+    reachability cannot establish bibliographic identity.
 
     Returns (accessible, status_message).
     """
@@ -372,10 +412,12 @@ def verify_url(url: str) -> Tuple[bool, str]:
                 return True, f"HTTP {resp.status} OK"
             return False, f"HTTP {resp.status}"
     except error.HTTPError as e:
+        code = e.code
+        e.close()
         # Some servers reject HEAD but the resource exists; 403/405 are ambiguous
-        if e.code in (403, 405):
-            return True, f"HTTP {e.code} (HEAD rejected, resource likely exists)"
-        return False, f"HTTP {e.code}"
+        if code in (403, 405):
+            return True, f"HTTP {code} (HEAD rejected, resource likely exists)"
+        return False, f"HTTP {code}"
     except error.URLError as e:
         return False, f"URL error: {e.reason}"
     except Exception as e:
@@ -404,21 +446,37 @@ def title_similarity(t1: str, t2: str) -> float:
     return max(jaccard, containment)
 
 
+def venue_similarity(v1: str, v2: str) -> float:
+    """Compare venues without letting generic stopwords imply agreement."""
+    stopwords = {"a", "an", "and", "for", "in", "of", "on", "the"}
+
+    def without_stopwords(value: str) -> str:
+        words = re.findall(r"\w+", value.casefold())
+        return " ".join(word for word in words if word not in stopwords)
+
+    return title_similarity(without_stopwords(v1), without_stopwords(v2))
+
+
 # ---------------------------------------------------------------------------
 # Crossref Lookup (primary — 50 req/sec, no API key needed)
 # ---------------------------------------------------------------------------
 
 def _best_title_match(
-    candidates: List[Dict], clean_title: str, title_key: str = "title"
+    candidates: List[Any], clean_title: str, title_key: str = "title"
 ) -> Tuple[Optional[Dict], float]:
     """Find the candidate with the highest title similarity. Returns (item, similarity)."""
     best_sim = 0.0
     best_item = None
     for item in candidates:
+        if not isinstance(item, dict):
+            continue
         raw = item.get(title_key, "")
-        # Crossref wraps title in a list
         if isinstance(raw, list):
-            raw = raw[0] if raw else ""
+            raw = raw[0] if raw and isinstance(raw[0], str) else ""
+        elif not isinstance(raw, str):
+            raw = ""
+        if not raw.strip():
+            continue
         sim = title_similarity(clean_title, raw)
         if sim > best_sim:
             best_sim = sim
@@ -426,12 +484,25 @@ def _best_title_match(
     return best_item, best_sim
 
 
+def _optional_metadata_string(value: Any) -> str:
+    """Normalize an optional string or one-element string list."""
+    if isinstance(value, str):
+        return value.strip()
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 1
+        and isinstance(value[0], str)
+    ):
+        return value[0].strip()
+    return ""
+
+
 CROSSREF_API_BASE = "https://api.crossref.org/works"
 
 
 def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None,
                    retries: int = 3,
-                   errors: Optional[List[str]] = None) -> Optional[Dict]:
+                   errors: Optional[List[str]] = None) -> Optional[Any]:
     """
     Generic HTTP GET returning parsed JSON.
 
@@ -462,10 +533,12 @@ def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None,
                 _note(f"JSON decode error from {endpoint}: {str(e)[:80]}")
                 return None
         except error.HTTPError as e:
-            if e.code == 429 or e.code >= 500:
-                last_err = f"HTTP {e.code}"  # transient: retry
+            code = e.code
+            e.close()
+            if code == 429 or code >= 500:
+                last_err = f"HTTP {code}"  # transient: retry
             else:
-                _note(f"HTTP {e.code} from {endpoint}")
+                _note(f"HTTP {code} from {endpoint}")
                 return None
         except error.URLError as e:
             last_err = f"URL error: {e.reason}"
@@ -503,10 +576,14 @@ def search_crossref(title: str) -> Tuple[bool, Dict]:
     url = f"{CROSSREF_API_BASE}?{params}"
 
     data = _http_get_json(url)
-    if not data or "message" not in data:
-        return False, {"error": "no response from Crossref"}
-
-    items = data["message"].get("items", [])
+    if not isinstance(data, dict):
+        return False, {"error": "invalid Crossref response: expected object"}
+    message = data.get("message")
+    if not isinstance(message, dict):
+        return False, {"error": "invalid Crossref response: message is not an object"}
+    items = message.get("items")
+    if not isinstance(items, list):
+        return False, {"error": "invalid Crossref response: items is not a list"}
     if not items:
         return False, {"error": "no results from Crossref"}
 
@@ -516,33 +593,57 @@ def search_crossref(title: str) -> Tuple[bool, Dict]:
 
     # Extract authors
     authors = []
-    for a in best_item.get("author", []):
-        name = f"{a.get('given', '')} {a.get('family', '')}".strip()
-        if name:
-            authors.append(name)
+    raw_authors = best_item.get("author", [])
+    if isinstance(raw_authors, list):
+        for author in raw_authors:
+            if not isinstance(author, dict):
+                continue
+            given = author.get("given", "")
+            family = author.get("family", "")
+            given = given.strip() if isinstance(given, str) else ""
+            family = family.strip() if isinstance(family, str) else ""
+            name = f"{given} {family}".strip()
+            if name:
+                authors.append(name)
 
     # Extract year from published-print or published-online
     year = None
     for date_field in ("published-print", "published-online"):
-        date_parts = best_item.get(date_field, {}).get("date-parts", [[None]])
-        if date_parts and date_parts[0] and date_parts[0][0]:
+        date_value = best_item.get(date_field)
+        if not isinstance(date_value, dict):
+            continue
+        date_parts = date_value.get("date-parts")
+        if (
+            isinstance(date_parts, list)
+            and date_parts
+            and isinstance(date_parts[0], list)
+            and date_parts[0]
+        ):
             year = date_parts[0][0]
             break
 
     # Extract venue
-    containers = best_item.get("container-title", [])
-    venue = containers[0] if containers else ""
-
-    cr_titles = best_item.get("title", [])
-    return True, {
-        "title": cr_titles[0] if cr_titles else "",
+    venue = _optional_metadata_string(best_item.get("container-title", ""))
+    title_value = _optional_metadata_string(best_item.get("title", ""))
+    doi_value = best_item.get("DOI", "")
+    doi = doi_value.strip() if isinstance(doi_value, str) else ""
+    metadata = {
+        "title": title_value,
         "authors": authors,
         "year": year,
         "venue": venue,
-        "doi": best_item.get("DOI", ""),
+        "doi": doi,
         "source": "crossref",
         "title_similarity": best_sim,
     }
+    gaps = BibtexCitationVerifier._metadata_identity_gaps(metadata)
+    if gaps:
+        metadata["error"] = (
+            "incomplete Crossref metadata: missing or unusable "
+            + ", ".join(gaps)
+        )
+        return False, metadata
+    return True, metadata
 
 
 # ---------------------------------------------------------------------------
@@ -575,23 +676,49 @@ def search_semantic_scholar(
         headers["x-api-key"] = api_key
 
     data = _http_get_json(url, headers=headers)
-    if not data or not data.get("data"):
+    if not isinstance(data, dict):
+        return False, {"error": "invalid Semantic Scholar response: expected object"}
+    papers = data.get("data")
+    if not isinstance(papers, list):
+        return False, {"error": "invalid Semantic Scholar response: data is not a list"}
+    if not papers:
         return False, {"error": "no results from Semantic Scholar"}
 
-    best_paper, best_sim = _best_title_match(data["data"], clean)
+    best_paper, best_sim = _best_title_match(papers, clean)
     if best_paper is None or best_sim < 0.5:
         return False, {"error": f"no good title match (best similarity: {best_sim:.1%})"}
 
-    authors = [a.get("name", "") for a in best_paper.get("authors", [])]
-    return True, {
-        "title": best_paper.get("title", ""),
+    authors = []
+    raw_authors = best_paper.get("authors", [])
+    if isinstance(raw_authors, list):
+        for author in raw_authors:
+            if not isinstance(author, dict):
+                continue
+            name = author.get("name", "")
+            if isinstance(name, str) and name.strip():
+                authors.append(name.strip())
+    external_ids = best_paper.get("externalIds", {})
+    if not isinstance(external_ids, dict):
+        external_ids = {}
+    doi_value = external_ids.get("DOI", "")
+    doi = doi_value.strip() if isinstance(doi_value, str) else ""
+    metadata = {
+        "title": _optional_metadata_string(best_paper.get("title", "")),
         "authors": authors,
         "year": best_paper.get("year"),
-        "venue": best_paper.get("venue", ""),
-        "doi": best_paper.get("externalIds", {}).get("DOI", ""),
+        "venue": _optional_metadata_string(best_paper.get("venue", "")),
+        "doi": doi,
         "source": "s2",
         "title_similarity": best_sim,
     }
+    gaps = BibtexCitationVerifier._metadata_identity_gaps(metadata)
+    if gaps:
+        metadata["error"] = (
+            "incomplete Semantic Scholar metadata: missing or unusable "
+            + ", ".join(gaps)
+        )
+        return False, metadata
+    return True, metadata
 
 
 def search_external(title: str, enable_s2: bool = True,
@@ -623,6 +750,48 @@ def search_external(title: str, enable_s2: bool = True,
     return False, meta  # return Crossref's error
 
 
+_LATEX_ACCENT_RE = re.compile(
+    r"\{?\\(?:['\"`~^=.cuvHtdb])\s*\{?([A-Za-z])\}?\}?"
+)
+
+
+def _strip_diacritics(s: str) -> str:
+    """Remove Unicode diacritics: ü→u, ç→c, ö→o, etc."""
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _clean_author_name(name: str) -> str:
+    """Normalize LaTeX/Unicode accents and case symmetrically for name matching."""
+    clean = name
+    # Accent commands may be braced ({\"a}) or unbraced (\"a).
+    previous = None
+    while clean != previous:
+        previous = clean
+        clean = _LATEX_ACCENT_RE.sub(r"\1", clean)
+        clean = re.sub(r"\\[A-Za-z]+\{([^{}]*)\}", r"\1", clean)
+    clean = re.sub(r"[{}]", "", clean)
+    clean = _strip_diacritics(clean).casefold()
+    return re.sub(r"\s+", " ", clean).strip()
+
+
+def _normalized_last_name(name: str) -> str:
+    """Extract the final family token from either BibTeX or API name order.
+
+    Comparing the final token is conservative but handles particles
+    symmetrically (``van Rossum, Guido`` and ``Guido van Rossum``).
+    """
+    clean = _clean_author_name(name)
+    if not clean:
+        return ""
+    if "," in clean:
+        family = clean.split(",", 1)[0].strip()
+        family_words = family.split()
+        return family_words[-1] if family_words else ""
+    words = clean.split()
+    return words[-1] if words else ""
+
+
 def parse_bib_authors(bib_author: str) -> List[str]:
     """
     Parse BibTeX author field into a list of normalized last names.
@@ -641,42 +810,25 @@ def parse_bib_authors(bib_author: str) -> List[str]:
         part = part.strip()
         if not part:
             continue
-        # Strip LaTeX accents: {\"o} -> o, {\c{c}} -> c, etc.
-        part = re.sub(r"\{?\\['\"`~^=.cuvHtdb]\{?(\w)\}?\}?", r"\1", part)
-        part = re.sub(r"[{}]", "", part)
-        if "," in part:
-            # "Last, First" format
-            last = part.split(",")[0].strip()
-        else:
-            # "First Last" format — last word is the last name
-            words = part.split()
-            last = words[-1] if words else part
-        last_names.append(last.lower().strip())
+        last = _normalized_last_name(part)
+        if last:
+            last_names.append(last)
     return last_names
 
 
-def _strip_diacritics(s: str) -> str:
-    """Remove diacritics: ü→u, ç→c, ö→o, etc."""
-    nfkd = unicodedata.normalize("NFKD", s)
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
-
-
 def parse_s2_authors(s2_authors: List[str]) -> List[str]:
-    """Extract normalized last names from external API author name list."""
+    """Extract normalized family names from external API author name lists."""
     last_names = []
     for name in s2_authors:
-        name = name.strip()
-        if not name:
-            continue
-        words = name.split()
-        last = words[-1].lower() if words else name.lower()
-        last_names.append(_strip_diacritics(last))
+        last = _normalized_last_name(name)
+        if last:
+            last_names.append(last)
     return last_names
 
 
 def author_similarity(bib_author: str, s2_authors: List[str]) -> Tuple[float, List[str]]:
     """
-    Compare BibTeX author string against S2 author list.
+    Compare a BibTeX author string against an external metadata author list.
 
     Returns (similarity_score, list_of_mismatches).
     Similarity is Jaccard on last-name sets.
@@ -687,7 +839,7 @@ def author_similarity(bib_author: str, s2_authors: List[str]) -> Tuple[float, Li
     if not bib_lasts and not s2_lasts:
         return 1.0, []
     if not bib_lasts or not s2_lasts:
-        return 0.0, [f"bib={list(bib_lasts)}, s2={list(s2_lasts)}"]
+        return 0.0, [f"bib={list(bib_lasts)}, metadata={list(s2_lasts)}"]
 
     intersection = bib_lasts & s2_lasts
     union = bib_lasts | s2_lasts
@@ -699,7 +851,7 @@ def author_similarity(bib_author: str, s2_authors: List[str]) -> Tuple[float, Li
     if only_bib:
         mismatches.append(f"in bib only: {sorted(only_bib)}")
     if only_s2:
-        mismatches.append(f"in S2 only: {sorted(only_s2)}")
+        mismatches.append(f"in metadata only: {sorted(only_s2)}")
 
     return sim, mismatches
 
@@ -794,12 +946,6 @@ def detect_hallucination_patterns(entry: Dict[str, str]) -> List[str]:
                         )
                         break  # one flag is enough
 
-    # --- Unverifiable entry ---
-    doi = entry.get("doi", "")
-    url = entry.get("url", "")
-    if not doi and not url:
-        issues.append("No DOI and no URL -- cannot independently verify")
-
     return issues
 
 
@@ -848,6 +994,10 @@ def normalize_title_key(title: str) -> str:
     return re.sub(r"[^\w]+", " ", clean).strip()
 
 
+DOI_CACHE_PREFIX = "doi-v2:"
+EXTERNAL_CACHE_PREFIX = "title-v2:"
+
+
 # ---------------------------------------------------------------------------
 # Main Verifier Class
 # ---------------------------------------------------------------------------
@@ -860,7 +1010,7 @@ class BibtexCitationVerifier:
         1. Parse .bib file
         2. Scan .tex files for \\cite{} references
         3. Cross-check cited keys vs. .bib keys
-        4. For each .bib entry: hallucination patterns, DOI check, URL check
+        4. For each .bib entry: hallucination patterns and metadata agreement
         5. Produce a verification report
     """
 
@@ -872,11 +1022,15 @@ class BibtexCitationVerifier:
     UNVERIFIED = "UNVERIFIED"
 
     # Issues containing these markers are "soft": they do not, by themselves,
-    # make an otherwise-unverifiable entry SUSPICIOUS.
+    # override otherwise-valid identity evidence.
     SOFT_ISSUE_MARKERS = (
-        "No DOI and no URL",
         "network error",
+        "metadata incomplete",
     )
+
+    TITLE_SIMILARITY_THRESHOLD = 0.5
+    AUTHOR_SIMILARITY_THRESHOLD = 0.5
+    VENUE_SIMILARITY_THRESHOLD = 0.3
 
     def __init__(
         self,
@@ -906,6 +1060,7 @@ class BibtexCitationVerifier:
         self.missing_keys: Set[str] = set()  # cited but not in .bib
         self.orphan_keys: Set[str] = set()   # in .bib but not cited
         self.suspicious_count: int = 0
+        self.scan_errors: List[str] = []
 
         self._report_lines: List[str] = []
 
@@ -923,30 +1078,189 @@ class BibtexCitationVerifier:
 
     @classmethod
     def _is_soft_issue(cls, issue: str) -> bool:
-        return any(marker in issue for marker in cls.SOFT_ISSUE_MARKERS)
+        folded = issue.casefold()
+        return any(marker.casefold() in folded for marker in cls.SOFT_ISSUE_MARKERS)
 
     @classmethod
     def compute_entry_status(cls, result: Dict) -> str:
         """
         Compute the final status for one entry from explicit booleans.
-        Priority: mismatch / fabricated DOI > DOI > Crossref/S2 > URL > patterns.
+        Priority: mismatch / fabricated DOI > hard issues > identity evidence.
 
-        Expects keys: doi_verified, url_verified, ext_verified, mismatch,
-        doi_not_found, issues.
+        URL accessibility is deliberately ignored: it cannot establish
+        bibliographic identity.
         """
         if result.get("mismatch") or result.get("doi_not_found"):
+            return cls.SUSPICIOUS
+        hard_issues = [i for i in result.get("issues", [])
+                       if not cls._is_soft_issue(i)]
+        if hard_issues:
             return cls.SUSPICIOUS
         if result.get("doi_verified"):
             return cls.VERIFIED
         if result.get("ext_verified"):
             return cls.EXT_VERIFIED
-        if result.get("url_verified"):
-            return cls.URL_VERIFIED
-        hard_issues = [i for i in result.get("issues", [])
-                       if not cls._is_soft_issue(i)]
-        if hard_issues:
-            return cls.SUSPICIOUS
         return cls.UNVERIFIED
+
+    @staticmethod
+    def _usable_metadata_authors(metadata: Dict) -> List[str]:
+        """Return source author names that contain a usable family name."""
+        authors = metadata.get("authors", [])
+        if not isinstance(authors, (list, tuple)):
+            return []
+        return [
+            author.strip()
+            for author in authors
+            if isinstance(author, str) and _normalized_last_name(author)
+        ]
+
+    @staticmethod
+    def _validated_metadata_year(metadata: Dict) -> Optional[int]:
+        """Return a plausible source year without coercing booleans or floats.
+
+        Accepted forms are non-boolean integers and digit-only strings in the
+        inclusive range 1000 through the current calendar year.
+        """
+        year = metadata.get("year")
+        if isinstance(year, bool):
+            return None
+        if isinstance(year, int):
+            value = year
+        elif isinstance(year, str) and year.isascii() and year.isdigit():
+            value = int(year)
+        else:
+            return None
+        return value if 1000 <= value <= CURRENT_YEAR else None
+
+    @classmethod
+    def _has_usable_metadata_year(cls, metadata: Dict) -> bool:
+        """Return whether source metadata supplies a validated publication year."""
+        return cls._validated_metadata_year(metadata) is not None
+
+    @staticmethod
+    def _usable_metadata_venue(metadata: Dict) -> str:
+        """Normalize an optional venue string; invalid shapes are inconclusive."""
+        return _optional_metadata_string(metadata.get("venue", ""))
+
+    @classmethod
+    def _metadata_identity_gaps(cls, metadata: Dict) -> List[str]:
+        """List required identity fields absent or unusable in source metadata."""
+        gaps: List[str] = []
+        title = metadata.get("title")
+        if not isinstance(title, str) or not title.strip():
+            gaps.append("title")
+        if not cls._usable_metadata_authors(metadata):
+            gaps.append("authors")
+        if not cls._has_usable_metadata_year(metadata):
+            gaps.append("year")
+        return gaps
+
+    @classmethod
+    def _valid_doi_cache_record(cls, record: Any) -> bool:
+        """Validate a DOI cache record before indexing or trusting it."""
+        if not isinstance(record, dict):
+            return False
+        success = record.get("success")
+        metadata = record.get("metadata")
+        if not isinstance(success, bool) or not isinstance(metadata, dict):
+            return False
+        return not success or not cls._metadata_identity_gaps(metadata)
+
+    @classmethod
+    def _valid_external_cache_record(cls, record: Any) -> bool:
+        """Validate an external-search cache record before indexing it."""
+        if not isinstance(record, dict):
+            return False
+        found = record.get("found")
+        metadata = record.get("metadata")
+        if not isinstance(found, bool) or not isinstance(metadata, dict):
+            return False
+        return not found or not cls._metadata_identity_gaps(metadata)
+
+    def _record_incomplete_metadata(
+        self, source_label: str, gaps: List[str], result: Dict
+    ) -> None:
+        issue = (
+            f"{source_label} metadata incomplete "
+            f"(missing or unusable {', '.join(gaps)}); "
+            "not used as verification evidence"
+        )
+        result["issues"].append(issue)
+        self._out(f"    [i] {issue}")
+
+    def _compare_metadata(
+        self,
+        fields: Dict[str, str],
+        metadata: Dict,
+        source_label: str,
+        result: Dict,
+    ) -> None:
+        """Compare identity-bearing metadata using one conservative policy."""
+        bib_title = fields.get("title", "")
+        metadata_title = metadata.get("title", "")
+        if bib_title and isinstance(metadata_title, str) and metadata_title.strip():
+            sim = title_similarity(bib_title, metadata_title)
+            self._out(f"    {source_label} title similarity: {sim:.1%}")
+            if sim < self.TITLE_SIMILARITY_THRESHOLD:
+                issue = (
+                    f"Title mismatch ({source_label}): similarity {sim:.1%} "
+                    f"(metadata title: '{str(metadata_title)[:60]}...')"
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
+
+        bib_author = fields.get("author", "")
+        metadata_authors = self._usable_metadata_authors(metadata)
+        if bib_author and metadata_authors:
+            auth_sim, auth_mismatches = author_similarity(
+                bib_author, metadata_authors
+            )
+            self._out(f"    {source_label} authors: similarity {auth_sim:.0%}")
+            if auth_sim < self.AUTHOR_SIMILARITY_THRESHOLD:
+                issue = (
+                    f"Author mismatch ({source_label}): "
+                    f"{'; '.join(auth_mismatches)}"
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
+
+        bib_year = fields.get("year", "")
+        metadata_year = self._validated_metadata_year(metadata)
+        if bib_year and metadata_year is not None:
+            try:
+                years_match = int(bib_year) == metadata_year
+            except (ValueError, TypeError):
+                years_match = True  # structural validation reports malformed years
+            if not years_match:
+                issue = (
+                    f"Year mismatch ({source_label}): "
+                    f"bib={bib_year}, {source_label}={metadata_year}"
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
+
+        # Some APIs omit a container title. Absence is inconclusive; a
+        # contradiction is suspicious only when both sides provide a venue.
+        bib_venue = fields.get("booktitle", "") or fields.get("journal", "")
+        metadata_venue = self._usable_metadata_venue(metadata)
+        if bib_venue and metadata_venue:
+            venue_sim = venue_similarity(bib_venue, metadata_venue)
+            self._out(
+                f"    {source_label} venue: \"{metadata_venue}\" "
+                f"(similarity: {venue_sim:.0%})"
+            )
+            if venue_sim < self.VENUE_SIMILARITY_THRESHOLD:
+                issue = (
+                    f"Venue mismatch ({source_label}): "
+                    f"bib=\"{bib_venue[:50]}\", "
+                    f"{source_label}=\"{str(metadata_venue)[:50]}\""
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
 
     # ---- Core workflow ----
 
@@ -1017,9 +1331,11 @@ class BibtexCitationVerifier:
         self._out("[2/5] Scanning .tex files for citations")
         self._out(f"      {self.tex_dir}")
 
-        self.cited_keys, self.key_to_files, scan_warnings = scan_tex_citations(self.tex_dir)
+        self.cited_keys, self.key_to_files, self.scan_errors = scan_tex_citations(
+            self.tex_dir
+        )
         self._out(f"      Found {len(self.cited_keys)} unique citation keys")
-        for w in scan_warnings:
+        for w in self.scan_errors:
             self._out(f"      [!] {w}")
 
         tex_files = sorted(self.tex_dir.rglob("*.tex"))
@@ -1073,6 +1389,7 @@ class BibtexCitationVerifier:
                 "issues": [],
                 "doi_verified": False,
                 "url_verified": False,
+                "url_present": bool(fields.get("url", "")),
                 "ext_verified": False,
                 "mismatch": False,        # metadata mismatch (title/author/year/venue)
                 "doi_not_found": False,   # DOI resolved to 404 (likely fabricated)
@@ -1094,49 +1411,40 @@ class BibtexCitationVerifier:
                 self._out(f"    DOI   : {doi}")
                 self._out(f"    Resolving DOI ...", )
 
-                cache_key = f"doi:{doi}"
+                # v2 invalidates records whose DOI authors were cached in the
+                # old Family Given order.
+                cache_key = f"{DOI_CACHE_PREFIX}{doi}"
                 cached = self.cache.get(cache_key) if self.cache else None
-                if cached is not None:
+                if self._valid_doi_cache_record(cached):
                     success, metadata = cached["success"], cached["metadata"]
                     self._out(f"    (from cache)")
                 else:
+                    if cached is not None:
+                        self._out("    (ignored invalid or incomplete cache record)")
                     success, metadata = verify_doi(doi)
                     time.sleep(0.5)  # rate limit
-                    # Cache definitive outcomes only (never transient failures)
-                    if self.cache and not metadata.get("network_error"):
+                    # Cache complete successes and definitive failures only.
+                    cacheable_success = (
+                        success and not self._metadata_identity_gaps(metadata)
+                    )
+                    cacheable_failure = (
+                        not success and not metadata.get("network_error")
+                    )
+                    if self.cache and (cacheable_success or cacheable_failure):
                         self.cache.set(cache_key,
                                        {"success": success, "metadata": metadata})
 
                 if success:
-                    result["doi_verified"] = True
                     result["doi_metadata"] = metadata
-                    self._out(f"    DOI resolved successfully")
-
-                    # Check title similarity
-                    if title and metadata.get("title"):
-                        sim = title_similarity(title, metadata["title"])
-                        self._out(f"    Title similarity: {sim:.1%}")
-                        if sim < 0.4:
-                            issue = (
-                                f"Title mismatch: similarity {sim:.1%} "
-                                f"(DOI title: '{metadata['title'][:60]}...')"
-                            )
-                            result["issues"].append(issue)
-                            result["mismatch"] = True
-                            self._out(f"    [!] {issue}")
-
-                    # Check year match
-                    bib_year = fields.get("year", "")
-                    doi_year = metadata.get("year")
-                    if bib_year and doi_year:
-                        try:
-                            if int(bib_year) != int(doi_year):
-                                issue = f"Year mismatch: .bib says {bib_year}, DOI says {doi_year}"
-                                result["issues"].append(issue)
-                                result["mismatch"] = True
-                                self._out(f"    [!] {issue}")
-                        except ValueError:
-                            pass
+                    self._out("    DOI metadata received")
+                    self._compare_metadata(fields, metadata, "DOI", result)
+                    identity_gaps = self._metadata_identity_gaps(metadata)
+                    if identity_gaps:
+                        self._record_incomplete_metadata(
+                            "DOI", identity_gaps, result
+                        )
+                    elif not result["mismatch"]:
+                        result["doi_verified"] = True
                 else:
                     err = metadata.get("error", "unknown error")
                     if metadata.get("network_error"):
@@ -1148,19 +1456,11 @@ class BibtexCitationVerifier:
             else:
                 self._out(f"    DOI   : (none)")
 
-            # 4c. URL verification
+            # 4c. Report URL presence without fetching arbitrary BibTeX URLs.
             url = fields.get("url", "")
             if url:
                 self._out(f"    URL   : {url}")
-                accessible, status_msg = verify_url(url)
-                time.sleep(0.5)  # rate limit
-
-                if accessible:
-                    result["url_verified"] = True
-                    self._out(f"    URL accessible: {status_msg}")
-                else:
-                    result["issues"].append(f"URL inaccessible: {status_msg}")
-                    self._out(f"    [X] URL inaccessible: {status_msg}")
+                self._out("    URL   : present (informational; not fetched)")
             else:
                 self._out(f"    URL   : (none)")
 
@@ -1169,17 +1469,23 @@ class BibtexCitationVerifier:
             doi_clean = result["doi_verified"] and not result["mismatch"]
             if title and not doi_clean:
                 self._out(f"    API   : Searching Crossref ...")
-                ext_cache_key = f"title:{normalize_title_key(title)}"
+                ext_cache_key = f"{EXTERNAL_CACHE_PREFIX}{normalize_title_key(title)}"
                 cached = self.cache.get(ext_cache_key) if self.cache else None
-                if cached is not None:
+                if self._valid_external_cache_record(cached):
                     found, ext_meta = cached["found"], cached["metadata"]
                     self._out(f"    (from cache)")
                 else:
+                    if cached is not None:
+                        self._out("    (ignored invalid or incomplete cache record)")
                     found, ext_meta = search_external(
                         title, enable_s2=self.enable_s2, s2_api_key=self.s2_api_key,
                         bib_author=fields.get("author", ""),
                     )
-                    if self.cache and found:
+                    if (
+                        self.cache
+                        and found
+                        and not self._metadata_identity_gaps(ext_meta)
+                    ):
                         self.cache.set(ext_cache_key,
                                        {"found": found, "metadata": ext_meta})
                 src = ext_meta.get("source", "?")
@@ -1191,48 +1497,14 @@ class BibtexCitationVerifier:
                     self._out(f"    {src_label:8s}: Match found (title similarity: {sim_pct:.0%})")
                     self._out(f"    {src_label:8s}: \"{ext_meta.get('title', '')[:70]}\"")
 
-                    # Author cross-check
-                    author = fields.get("author", "")
-                    ext_authors = ext_meta.get("authors", [])
-                    if author and ext_authors:
-                        auth_sim, auth_mismatches = author_similarity(author, ext_authors)
-                        self._out(f"    {src_label} authors: similarity {auth_sim:.0%}")
-                        if auth_sim < 0.5:
-                            issue = f"Author mismatch ({src_label}): {'; '.join(auth_mismatches)}"
-                            result["issues"].append(issue)
-                            result["mismatch"] = True
-                            self._out(f"    [!] {issue}")
+                    self._compare_metadata(fields, ext_meta, src_label, result)
 
-                    # Year cross-check
-                    ext_year = ext_meta.get("year")
-                    bib_year_str = fields.get("year", "")
-                    if bib_year_str and ext_year:
-                        try:
-                            if int(bib_year_str) != int(ext_year):
-                                issue = f"Year mismatch ({src_label}): bib={bib_year_str}, {src_label}={ext_year}"
-                                result["issues"].append(issue)
-                                result["mismatch"] = True
-                                self._out(f"    [!] {issue}")
-                        except (ValueError, TypeError):
-                            pass
-
-                    # Venue cross-check
-                    ext_venue = ext_meta.get("venue", "")
-                    bib_venue = fields.get("booktitle", "") or fields.get("journal", "")
-                    if ext_venue and bib_venue:
-                        venue_sim = title_similarity(bib_venue, ext_venue)
-                        self._out(f"    {src_label} venue: \"{ext_venue}\" (similarity: {venue_sim:.0%})")
-                        if venue_sim < 0.3:
-                            issue = (
-                                f"Venue mismatch ({src_label}): "
-                                f"bib=\"{bib_venue[:50]}\", {src_label}=\"{ext_venue[:50]}\""
-                            )
-                            result["issues"].append(issue)
-                            result["mismatch"] = True
-                            self._out(f"    [!] {issue}")
-
-                    # Ext verified if no mismatch found in this step
-                    if not result["mismatch"]:
+                    identity_gaps = self._metadata_identity_gaps(ext_meta)
+                    if identity_gaps:
+                        self._record_incomplete_metadata(
+                            src_label, identity_gaps, result
+                        )
+                    elif not result["mismatch"]:
                         result["ext_verified"] = True
                 else:
                     err = ext_meta.get("error", "unknown")
@@ -1245,9 +1517,8 @@ class BibtexCitationVerifier:
             result["status"] = self.compute_entry_status(result)
 
             status_display = {
-                self.VERIFIED: "VERIFIED (DOI)",
-                self.EXT_VERIFIED: f"VERIFIED ({ext_label})",
-                self.URL_VERIFIED: "VERIFIED (URL)",
+                self.VERIFIED: "VERIFIED (DOI metadata agreement)",
+                self.EXT_VERIFIED: f"VERIFIED ({ext_label} metadata agreement)",
                 self.SUSPICIOUS: "SUSPICIOUS",
                 self.UNVERIFIED: "UNVERIFIED",
             }
@@ -1266,9 +1537,16 @@ class BibtexCitationVerifier:
 
         verified = [k for k, r in self.results.items() if r["status"] == self.VERIFIED]
         ext_verified = [k for k, r in self.results.items() if r["status"] == self.EXT_VERIFIED]
-        url_verified = [k for k, r in self.results.items() if r["status"] == self.URL_VERIFIED]
         suspicious = [k for k, r in self.results.items() if r["status"] == self.SUSPICIOUS]
-        unverified = [k for k, r in self.results.items() if r["status"] == self.UNVERIFIED]
+        # Treat the retired URL_VERIFIED status as unverified if an old caller
+        # injects it; URL reachability is never identity evidence.
+        unverified = [
+            k for k, r in self.results.items()
+            if r["status"] in (self.UNVERIFIED, self.URL_VERIFIED)
+        ]
+        url_present_count = sum(
+            1 for r in self.results.values() if r.get("url_present")
+        )
         self.suspicious_count = len(suspicious)
 
         # Count by source for ext-verified
@@ -1278,12 +1556,13 @@ class BibtexCitationVerifier:
 
         total = len(self.results)
         self._out(f"  Total .bib entries   : {total}")
-        self._out(f"  DOI verified         : {len(verified)}")
-        self._out(f"  Crossref verified    : {cr_count}")
-        self._out(f"  S2 verified          : {s2_count}")
-        self._out(f"  URL verified         : {len(url_verified)}")
+        self._out(f"  DOI metadata match   : {len(verified)}")
+        self._out(f"  Crossref metadata    : {cr_count}")
+        self._out(f"  S2 metadata          : {s2_count}")
+        self._out(f"  URL present (info)   : {url_present_count}")
         self._out(f"  Suspicious           : {len(suspicious)}")
         self._out(f"  Unverified           : {len(unverified)}")
+        self._out(f"  .tex read errors     : {len(self.scan_errors)}")
         self._out(f"  Missing from .bib    : {len(self.missing_keys)}")
         self._out(f"  Orphan .bib entries  : {len(self.orphan_keys)}")
         self._out()
@@ -1304,7 +1583,9 @@ class BibtexCitationVerifier:
             for k in unverified:
                 r = self.results[k]
                 issues = r["issues"]
-                self._out(f"  {k}: {issues[0] if issues else 'no DOI or URL'}")
+                self._out(
+                    f"  {k}: {issues[0] if issues else 'no agreeing DOI/Crossref/S2 metadata'}"
+                )
             self._out()
 
         # Detail missing keys
@@ -1331,6 +1612,13 @@ class BibtexCitationVerifier:
             reasons.append(f"{len(self.missing_keys)} citation key(s) missing from .bib")
             failed = True
 
+        if self.scan_errors:
+            reasons.append(
+                f"{len(self.scan_errors)} .tex file(s) could not be read; "
+                "citation scan is incomplete"
+            )
+            failed = True
+
         if suspicious:
             reasons.append(f"{len(suspicious)} suspicious entry/entries detected")
             if self.strict:
@@ -1340,7 +1628,7 @@ class BibtexCitationVerifier:
             reasons.append(f"{len(unverified)} unverified entry/entries (strict mode)")
             failed = True
 
-        total_ok = len(verified) + len(ext_verified) + len(url_verified)
+        total_ok = len(verified) + len(ext_verified)
         if total > 0 and total_ok / total < 0.5 and not self.strict:
             reasons.append(f"Less than 50% of entries verified ({total_ok}/{total})")
             # Warning, but not a hard fail in non-strict mode
@@ -1355,7 +1643,10 @@ class BibtexCitationVerifier:
                 self._out(f"  - {r}")
         else:
             self._out("RESULT: PASSED")
-            self._out(f"  {total_ok}/{total} entries independently verified")
+            self._out(
+                f"  {total_ok}/{total} entries verified by bibliographic "
+                "metadata agreement"
+            )
 
         self._separator()
         self._out()
@@ -1405,8 +1696,9 @@ Checks performed:
   - Parse .bib and extract all entries
   - Scan .tex files for \\cite{} commands
   - Cross-check: missing keys, orphan entries
-  - DOI resolution and metadata matching (title similarity, year)
-  - URL accessibility (HEAD request)
+  - DOI metadata agreement (required title/authors/year; venue when available)
+  - Crossref / Semantic Scholar agreement under the same identity requirements
+  - Report URL presence without fetching arbitrary BibTeX URLs
   - Hallucination pattern detection (generic titles, future years,
     anachronistic terms, missing fields, unverifiable entries)
 

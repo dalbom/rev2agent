@@ -6,6 +6,16 @@ Write a complete manuscript draft in LaTeX, ready for submission to the target v
 ## Mode
 **Task (subagents)** for parallel section writing, then **direct** for integration and review.
 
+## Current Round Results
+
+Read `current_round` and `current_round_short_name` from `.research_state.json`, require a nonempty short name, and define the Phase 6 result directory once:
+
+```text
+round_dir = round{current_round}_{current_round_short_name}
+```
+
+Use only `{project_dir}/experiment/results/{round_dir}/comparison_table.md` and `{project_dir}/experiment/results/{round_dir}/comparison_table.json` as the current round's collected numerical sources. Do not fall back to a project-global comparison table.
+
 ## Prerequisites
 - All experiment results analyzed and confirmed by user (Phase 6 complete).
 - Figures generated and saved in `{project_dir}/manuscript/figures/`.
@@ -74,9 +84,9 @@ ANTI-HALLUCINATION RULES (MANDATORY):
 
 Before spawning section writers, prepare:
 1. A finalized `references.bib` with all pre-verified entries
-2. The results summary file `{project_dir}/manuscript/results_summary.md`, generated from `{project_dir}/experiment/results/comparison_table.json` (Phase 6 output). This file is given to EVERY section-writing task — it is the only place section writers may copy numbers from.
+2. The results summary file `{project_dir}/manuscript/results_summary.md`, generated from `{project_dir}/experiment/results/{round_dir}/comparison_table.json` (Phase 6 output). This file is given to EVERY section-writing task — it is the only place section writers may copy numbers from.
 3. A list of available figures with their exact filenames and captions
-4. **LaTeX table fragments**: convert `{project_dir}/experiment/results/comparison_table.json` into LaTeX table fragments under `{project_dir}/manuscript/tables/*.tex` (e.g., `main_results.tex`, `ablation.tex`) via a small conversion script. The script must pass the **Code Verification Protocol** (`prompts/05_experiment_execution.md`) before running. **Never hand-type metric values into LaTeX** — every table value flows from `comparison_table.json` through this script.
+4. **LaTeX table fragments**: convert `{project_dir}/experiment/results/{round_dir}/comparison_table.json` into LaTeX table fragments under `{project_dir}/manuscript/tables/*.tex` (e.g., `main_results.tex`, `ablation.tex`) via a small conversion script. The script must pass the **Code Verification Protocol** (`prompts/05_experiment_execution.md`) before running. **Never hand-type metric values into LaTeX** — every table value flows from the round-scoped `comparison_table.json` through this script.
 
 ## Step 3: Parallel Section Writing (via Task Subagents)
 
@@ -288,7 +298,7 @@ python scripts/validate_manuscript.py \
     --bib references.bib \
     --output {project_dir}/manuscript/validation_report.txt
 
-# 2. Verify BibTeX citations (DOI + Crossref/S2 cross-check)
+# 2. Verify BibTeX identity (DOI/Crossref/S2 metadata agreement)
 #    NOTE: --tex-dir scans the WHOLE manuscript directory, not just sections/ —
 #    citations in main.tex must also be checked.
 python scripts/verify_citations_bibtex.py \
@@ -301,7 +311,7 @@ python scripts/verify_citations_bibtex.py \
 grep -rn "NEEDS-VERIFICATION" {project_dir}/manuscript/
 ```
 
-The citation verifier cross-checks against Crossref (primary) and Semantic Scholar (fallback) in addition to DOI resolution. Entries flagged as SUSPICIOUS due to author/year/venue mismatch are the most common LLM hallucination type (correct-sounding title, wrong metadata).
+The citation verifier requires each identity source (DOI, Crossref, or Semantic Scholar) to provide a nonempty title, at least one usable author, and a year, all agreeing with BibTeX. Venue is optional but must agree when both records provide one. Incomplete source metadata is inconclusive and triggers fallback or `UNVERIFIED`, not a verified status. A reachable URL is not verification evidence and the verifier does not fetch arbitrary URLs from BibTeX. Entries flagged as SUSPICIOUS due to identity or structural mismatches are the most common LLM hallucination type (correct-sounding title, wrong metadata).
 
 **Exit-code semantics:** with `--strict`, the script exits non-zero on any SUSPICIOUS or UNVERIFIED entry. (Without `--strict`, it exits 2 when SUSPICIOUS > 0.) A non-zero exit means the gate has NOT passed.
 

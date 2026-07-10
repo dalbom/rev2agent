@@ -137,6 +137,7 @@ Field names and enum values follow `prompts/conventions.md`. After user confirms
 - `current_phase`: `4`
 - `sub_step`: `null`
 - `current_round`: increment by 1 — do NOT set to `1` unconditionally. Fresh project: `0` → `1` (first round). Re-entry from Phase 6 after Round N: `N` → `N+1` (rounds are monotonic and never reset; see `prompts/conventions.md`).
+- `current_round_short_name`: `""` — the new round has no identity until Phase 4 confirms its design and name.
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - Update `topic.specific_topic`, `topic.research_question`, `topic.positioning`, `topic.target_venue`, `topic.target_dataset`, `topic.metrics`

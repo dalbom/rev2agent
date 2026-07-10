@@ -1,4 +1,4 @@
-# Rev2Agent config (contains plaintext API keys — never commit)
+# Rev2Agent machine-local provider/model configuration
 .rev2agent_config.json
 
 # User research projects: every root-level directory that is not part of the
@@ -9,6 +9,7 @@
 !/scripts/
 !/tests/
 !/.github/
+!/docs/
 
 # LaTeX compiler binary (users download it to the repo root)
 /tectonic

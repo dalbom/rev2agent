@@ -6,8 +6,16 @@ Analyze experiment results, generate tables and figures, perform statistical tes
 ## Mode
 **Direct + Task subagents** for parallel analysis tasks.
 
+## Entry Routing (check before prerequisites)
+
+Read `.research_state.json` before doing any analysis. If `sub_step == "review_reentry"`, the persisted marker proves this is review-driven planning from Phase 8: preserve the existing `current_round` and `current_round_short_name`, skip the prerequisites and steps 6.1–6.8, and go directly to Round Planning with `{project_dir}/manuscript/review_synthesis.md` as an input. Do not infer re-entry from conversation history.
+
+Keep `sub_step: "review_reentry"` while presenting options. When `review_reentry` is active, clear or change `sub_step` before leaving re-entry planning through any State Update route below; never leave the marker set after routing to Phase 3, 4, 5, or 7.
+
+For normal analysis, require a nonempty `current_round_short_name` and define `round_dir = round{current_round}_{current_round_short_name}` once. Use that value for every current-round path below.
+
 ## Prerequisites
-- All (or most) experiments completed (check `{project_dir}/experiment/results/*/COMPLETED`).
+- All (or most) experiment × seed runs completed (check `{project_dir}/experiment/results/{round_dir}/*/seed*/COMPLETED` and validate each marker's experiment ID, seed, and fingerprint).
 - If some experiments failed, note which ones and whether re-running is needed.
 - **`phase5_experiment_log.md` must exist** in the current round's summary directory. If it does not, write it before proceeding with analysis.
 
@@ -20,10 +28,10 @@ Analyze experiment results, generate tables and figures, perform statistical tes
 Run the automated collection script FIRST:
 
 ```bash
-python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+python3 scripts/collect_results.py {project_dir}/experiment/results/{round_dir}/ \
     --fail-on-warnings \
-    --output-md {project_dir}/experiment/results/comparison_table.md \
-    --output-json {project_dir}/experiment/results/comparison_table.json
+    --output-md {project_dir}/experiment/results/{round_dir}/comparison_table.md \
+    --output-json {project_dir}/experiment/results/{round_dir}/comparison_table.json
 ```
 
 Then read `comparison_table.md` and use it as the **sole source** for all numerical claims in this phase. If a number does not appear in the generated table, it does not exist — do not cite metrics from memory or from a quick glance at a JSON file.
@@ -32,11 +40,11 @@ Then read `comparison_table.md` and use it as the **sole source** for all numeri
 
 To focus on specific metrics, use `--metric-keys`:
 ```bash
-python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+python3 scripts/collect_results.py {project_dir}/experiment/results/{round_dir}/ \
     --fail-on-warnings \
     --metric-keys cls_auc,recon_ssim,verif_auc \
-    --output-md {project_dir}/experiment/results/comparison_table.md \
-    --output-json {project_dir}/experiment/results/comparison_table.json
+    --output-md {project_dir}/experiment/results/{round_dir}/comparison_table.md \
+    --output-json {project_dir}/experiment/results/{round_dir}/comparison_table.json
 ```
 
 ### 6.2 Main Results Table
@@ -57,8 +65,8 @@ Ours            | 76.2 ± 0.3    | 49.3 ± 0.4    | 29
 
 **Provenance rule:** Every number in sections 6.2-6.7 must trace to a specific entry in `comparison_table.json`. When writing `phase6_results.md`, include the source file path for each claim:
 
-> mIoU improved from 72.3±0.4 (baseline, `round1_seed*/eval.json`)
-> to 76.2±0.3 (ours, `round1_seed*/eval.json`)
+> mIoU improved from 72.3±0.4 (baseline, `experiment/results/{round_dir}/E01/seed*/eval_results.json`)
+> to 76.2±0.3 (ours, `experiment/results/{round_dir}/E02/seed*/eval_results.json`)
 
 ### 6.3 Ablation Study Table
 
@@ -84,12 +92,12 @@ For each pair of methods being compared:
 2. Report p-values.
 3. Mark statistically significant improvements (p < 0.05).
 4. Compute effect size (Cohen's d).
-5. Save results to {project_dir}/experiment/results/statistical_tests.json
+5. Save results to {project_dir}/experiment/results/{round_dir}/statistical_tests.json
 ```
 
-**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/` — must include a `_meta` field per the Result File Convention in `prompts/05_experiment_execution.md` (script, log file, timestamp, config, round). Without it, the next round's `collect_results.py --fail-on-warnings` gate fails on these files.
+**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/{round_dir}/` — must include the canonical fields `experiment_id`, `script`, `log_file`, `timestamp`, `resolved_config`, `config_fingerprint`, `round`, and `seed`. `seed` is always required and must never be omitted. Per-run files use a nonnegative integer; aggregated files use `seed: "aggregate"`, and `resolved_config.contributing_seeds` must be a nonempty list of nonnegative integers. Without this metadata, the current round's `collect_results.py --fail-on-warnings` gate fails on these files. The Result File Convention in `prompts/05_experiment_execution.md` remains authoritative.
 
-After generating statistical test results, update `{project_dir}/experiment/results/INDEX.md` with any new result files created during analysis.
+After generating statistical test results, update `{project_dir}/experiment/results/{round_dir}/INDEX.md` with any new result files created during analysis.
 
 ### 6.5 Figure Generation (via Task subagent)
 
@@ -125,7 +133,7 @@ Style requirements:
 
 Apply the full **Code Verification Protocol** (defined in `prompts/05_experiment_execution.md`) to every analysis, statistical-test, and figure generation script written in this phase. This is the same 3-step protocol used for Phase 5 experiment scripts:
 
-1. **External-model logical review** — verify data flow, train/val/test splits, feature–label correspondence.
+1. **Independent logical review** — verify data flow, train/val/test splits, and feature-label correspondence. Use a host-native adversarial reviewer unless `.rev2agent_config.json` has `external_code_review` as the JSON boolean exactly `true`, `roles.verification` selects a configured external provider/model, and that provider's `api_key_env` is present. Otherwise no code, excerpts, or data leave the host.
 2. **Simplify code-quality pass** — unused imports, duplication, variable shadowing, memory efficiency, magic numbers.
 3. **Syntax check + execution**.
 
@@ -154,7 +162,20 @@ This section handles planning the next experiment round by consulting the persis
 
 This section triggers after the analysis steps above (6.1–6.8) when the user is deciding what to do next. It also triggers after Phase 7 feedback when the user decides to run another experiment round. It does NOT trigger if the user is proceeding directly to final manuscript submission with no further experiments planned.
 
-**Phase 8 re-entry mode:** If entering Phase 6 from Phase 8 (review-driven experiments), the previous round is already closed — skip steps 6.1–6.8 and go directly to Round Planning, seeding candidate directions from `{project_dir}/manuscript/review_synthesis.md`. Increment `current_round` when the new round is confirmed, as usual.
+**Phase 8 re-entry mode:** The Entry Routing rule above is authoritative. `sub_step == "review_reentry"` means the previous round is already closed; its identity remains unchanged until the user confirms a State Update route for the next work.
+
+### Review Re-entry Bookkeeping Guard (MANDATORY)
+
+When `sub_step == "review_reentry"`, the prior round is immutable closure history:
+
+- Do not move the prior round's Active direction to Completed again.
+- Do not append a Results Comparison row for the prior round.
+- Do not re-run abandonment or other normal-analysis closure bookkeeping for the prior round.
+- Do not write or modify the prior round's `phase6_results.md` or `round_summary.md`.
+- Preserve the prior round's existing summaries and `phase_history` entries.
+- May re-prioritize Pending directions and add new Pending directions from `review_synthesis.md`.
+
+Read the existing roadmap and review synthesis, make only those allowed planning updates, then route to the newly confirmed round. Every normal-analysis closure instruction below is subordinate to this guard.
 
 ### 6.9 Read the Roadmap
 
@@ -171,15 +192,15 @@ Before proposing any options for the next round:
 
 ### 6.10 Update Roadmap
 
-Before presenting options, update the roadmap to reflect what was just learned:
+Before presenting options, update the roadmap according to the active mode. In `review_reentry`, perform only Pending-priority and new-Pending updates supported by `review_synthesis.md`; the normal closure steps are skipped.
 
-1. **Move the just-completed direction from Active to Completed.** Include a one-line result summary (key metric, main finding).
+1. **Normal analysis only — skip in `review_reentry`: Move the just-completed direction from Active to Completed.** Include a one-line result summary (key metric, main finding).
 2. **Re-evaluate Pending priorities.** Current results may change the expected impact of pending directions:
    - If results suggest a certain direction is now more promising, move it up.
-   - If results make a direction irrelevant (e.g., a feature it depended on turned out to be uninformative), move it down or to Abandoned (see step 4).
+   - If evidence makes a direction less relevant, move it down within Pending. Only normal analysis may move it to Abandoned under step 4.
 3. **Add new directions discovered during the round.** Analysis, Grad-CAM, error analysis, or feedback often suggest new ideas. Add them to the appropriate priority tier with rationale and source.
-4. **Check for abandonment candidates.** Explicitly ask: "Did this round's evidence render any Active or Pending direction unviable?" For each such direction, move it to Abandoned with a reason from the enum:
-   - `falsified` — experiment disproved the hypothesis. **Evidence field is mandatory and must be a concrete path** (e.g., `experiment/results/roundN_something.json` or `summaries/roundN_*/phase6_results.md`).
+4. **Normal analysis only — skip in `review_reentry`: Check for abandonment candidates.** Explicitly ask: "Did this round's evidence render any Active or Pending direction unviable?" For each such direction, move it to Abandoned with a reason from the enum:
+   - `falsified` — experiment disproved the hypothesis. **Evidence field is mandatory and must be a concrete path** (e.g., `experiment/results/{round_dir}/{exp_id}/seed{seed}/eval_results.json` or `summaries/roundN_*/phase6_results.md`).
    - `out_of_scope` — valid direction but outside the current project's scope.
    - `low_value` — **judgment** call: expected payoff no longer justifies the cost, given current results. Use this when the direction is *possible* but not *worth* pursuing.
    - `solved_elsewhere` — prior or concurrent work already addressed it.
@@ -187,7 +208,7 @@ Before presenting options, update the roadmap to reflect what was just learned:
    Each entry must also include a **Revisit trigger** (condition for reconsidering it, or `"none"`). Never silently drop directions.
 
 **Distinguishing `low_value` vs `infeasible`:** If a concrete obstacle names itself ("no multi-node cluster", "annotation would cost $50k"), use `infeasible`. If the judgment is "we could do this but it's not a priority", use `low_value`. When in doubt, `infeasible` is the stricter claim — only use it when the blocker is real and namable.
-5. **Append a row to the Results Comparison table** with the round's key quantitative outcome (target metric, best baseline, delta, one-line finding). Never delete or modify previous rows.
+5. **Normal analysis only — skip in `review_reentry`: Append a row to the Results Comparison table** with the round's key quantitative outcome (target metric, best baseline, delta, one-line finding). Never delete or modify previous rows.
 6. **Write the updated roadmap to disk** before presenting options to the user.
 
 **Legacy migration:** If the existing roadmap file uses the older `## Dropped` section, rename it to `## Abandoned` on this update and convert each entry to the structured format below (fill in reason/evidence/revisit-trigger from the entry's original rationale).
@@ -243,13 +264,19 @@ Recommendation: Option [X] because [reason].
 
 Once the user picks a direction:
 
-1. **Mark the chosen direction as Active** with the round number (e.g., `[R5]`).
+Activation is route-specific, including in `review_reentry`:
+
+- Reserve and activate `current_round + 1` only for a Phase 4 or direct Phase 5 route.
+- A Phase 7 route creates no new round and no Active next-round entry.
+- A Phase 3 route creates no Active experimental round during re-entry planning; Phase 3 owns the next increment and empty short name after the new plan is confirmed, with later phases owning activation.
+
+1. **For Phase 4 or direct Phase 5 only, mark the chosen direction Active** with the reserved next-round number (e.g., `[R5]`).
 2. **Keep all non-chosen directions in Pending** at their current priority level.
 3. **If a new direction was proposed in the options but not chosen**, add it to the appropriate Pending tier.
-4. **Mid-round abandonment (special case):** If the user explicitly abandons the currently Active direction (e.g., a pivot mid-round) instead of completing it, move it directly from Active to Abandoned with a reason from the enum. It does NOT need to pass through Completed first.
+4. **Normal analysis only — skip in `review_reentry`: Mid-round abandonment (special case).** If the user explicitly abandons the currently Active direction (e.g., a pivot mid-round) instead of completing it, move it directly from Active to Abandoned with a reason from the enum. It does NOT need to pass through Completed first.
 5. **Config drift check** (this prompt owns the protocol): If the chosen direction changes the project's default experimental configuration (e.g., architecture, output dimensions, number of layers, preprocessing), scan all Python scripts under `{project_dir}/` for hardcoded references to the old config (grep for the old values: dimensions, layer counts, model names, paths). Flag any scripts that need updating — especially figure/visualization generation scripts, which are often written once and not revisited when the default config evolves. List the flagged scripts to the user, update them before the next round runs, and note the config change in `{project_dir}/manuscript/data_provenance.md` if a manuscript exists (runtime-computed figure values are the highest-risk entries for drift).
 6. **Write the updated roadmap to disk.**
-7. **Proceed to Phase 4 (Experiment Design) or Phase 5 (Experiment Execution)** as appropriate for the chosen direction.
+7. **Proceed through the selected State Update route** below; do not create round state or roadmap activation that belongs to a different route.
 
 ### When to set `sub_step: "refinement"`
 
@@ -264,6 +291,8 @@ When routing back to Phase 4, set `sub_step` to `"refinement"` (Phase 4 then run
 Otherwise set `sub_step: null` for a normal Phase 4 design round. Refinement rounds still execute Phase 4 in full and require `phase4_experiment_design.md`.
 
 ### 6.13 Write Round Summary
+
+If `sub_step == "review_reentry"`, skip this entire section. The prior round's `round_summary.md`, `phase6_results.md`, and other closure artifacts already exist and must not be rewritten.
 
 After completing a round, write `round_summary.md` in the round subfolder. See `prompts/conventions.md` for the subfolder layout and the summary-file checklist.
 
@@ -332,7 +361,7 @@ A cross-round table tracking quantitative outcomes. Updated every round. Keeps a
 - **[RN] Direction Name** — one-line description
   - **Abandoned at:** Round N, Phase X
   - **Reason:** one of `falsified` | `out_of_scope` | `low_value` | `solved_elsewhere` | `infeasible`
-  - **Evidence:** for `falsified`, path to the result file that disproved it (e.g., `experiment/results/roundN_something.json`). For other reasons, 1-2 sentence rationale.
+  - **Evidence:** for `falsified`, path to the result file that disproved it (e.g., `experiment/results/{round_dir}/{exp_id}/seed{seed}/eval_results.json`). For other reasons, 1-2 sentence rationale.
   - **Revisit trigger:** condition that would reopen this direction, or `none`
 ```
 
@@ -400,62 +429,71 @@ If results don't support the hypothesis, or if results are positive but could be
 
 ## Phase Summary
 
+If `sub_step == "review_reentry"`, do not write or modify either prior-round summary file. Skip directly to the State Update after the user chooses the next route; the existing `phase6_results.md` and `round_summary.md` remain authoritative.
+
 After analysis and round planning are complete, write:
-- **File**: `{project_dir}/summaries/round{current_round}_{short_name}/phase6_results.md`
+- **File**: `{project_dir}/summaries/{round_dir}/phase6_results.md`
 - **Contents**: Main results table, ablation table, statistical test results, interpretation, paper viability assessment, round planning decision.
 
-- **File**: `{project_dir}/summaries/round{current_round}_{short_name}/round_summary.md`
+- **File**: `{project_dir}/summaries/{round_dir}/round_summary.md`
 - **Contents**: Objective, experiments run, results tables, key takeaway, files created.
 
 Both files must exist before proceeding to the next phase.
 
 ## State Update
 
-After user confirms results AND picks next direction (or confirms manuscript):
+After normal analysis, the user confirms results and picks the next direction (or manuscript). In `review_reentry`, the user picks the next route from review-driven planning without reconfirming or rewriting prior-round results.
+
+Round identity rules are route-specific: the Phase 4 route clears `current_round_short_name` to `""`; the direct Phase 5 route sets `current_round_short_name` to the short name confirmed during planning; Phase 7 and Phase 3 routes preserve `current_round_short_name` for the last completed round. These rules also clear or change `sub_step` when leaving `review_reentry` planning, as specified below.
+
+For `review_reentry`, never move the prior round to Completed again. Preserve its summaries and history; never append another `round_closed` or `phase_completed` event for it. A new `note`, `phase4_skipped`, or `new_research_plan` routing event may be appended when the selected route requires one.
 
 **If proceeding to another round (Phase 4):**
 - `current_phase`: `4`
 - `sub_step`: `null` (normal) or `"refinement"` (if reframing needed — see "When to set `sub_step: \"refinement\"`" above)
 - `current_round`: increment by 1
+- `current_round_short_name`: `""` — Phase 4 names and persists the newly confirmed round.
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
-- `experiment.status`: `"completed"`
-- Populate `results.raw_results_path`, `results.analysis_summary`
-- `results.user_confirmed`: `true`
-- **Update roadmap:** Move current round to Completed, mark chosen direction as Active
-- Append to `phase_history`
+- `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
+- Normal analysis only: populate `results.raw_results_path`, `results.analysis_summary`, and set `results.user_confirmed` to `true`; preserve them in `review_reentry`
+- **Update roadmap:** Normal analysis moves the just-completed round to Completed; `review_reentry` leaves the prior round unchanged. Reserve the incremented round and mark the chosen direction Active; Phase 4 will persist its short name.
+- Append the Phase 6 completion event in normal analysis; for `review_reentry`, append only a `note` describing the planning route.
 
 **If proceeding directly to Phase 5 (identical config — additional seeds/repetitions only, no design changes):**
 - `current_phase`: `5`
 - `sub_step`: `null`
 - `current_round`: increment by 1
+- `current_round_short_name`: the confirmed `short_name` assigned during this round-planning decision
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
-- `experiment.status`: `"completed"`
-- Populate `results.raw_results_path`, `results.analysis_summary`
-- `results.user_confirmed`: `true`
+- `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
+- Normal analysis only: populate `results.raw_results_path`, `results.analysis_summary`, and set `results.user_confirmed` to `true`; preserve them in `review_reentry`
 - **Assign the round's `short_name`** during round planning (Phase 4 will not run for this round — see `prompts/conventions.md` "Round Numbering")
-- **Update roadmap:** Move current round to Completed, mark chosen direction as Active
+- **Update roadmap:** Normal analysis moves the just-completed round to Completed; `review_reentry` leaves the prior round unchanged. Reserve the incremented round and mark the chosen direction Active using the short name confirmed here.
 - Append a `phase4_skipped` event to `phase_history` (entry format in `prompts/conventions.md`)
 
 **If proceeding to manuscript (Phase 7):**
 - `current_phase`: `7`
 - `sub_step`: `null`
 - `current_round`: unchanged
+- `current_round_short_name`: unchanged
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
-- `experiment.status`: `"completed"`
-- Populate `results.raw_results_path`, `results.analysis_summary`
-- `results.user_confirmed`: `true`
-- **Update roadmap:** Move current round to Completed
-- Append to `phase_history`
+- `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
+- Normal analysis only: populate `results.raw_results_path`, `results.analysis_summary`, and set `results.user_confirmed` to `true`; preserve them in `review_reentry`
+- **Update roadmap:** Normal analysis moves the current round to Completed; `review_reentry` makes no closure change.
+- No new round is reserved and no Active next-round entry is created; `current_round` and its short name remain unchanged.
+- Append the Phase 6 completion event in normal analysis; for `review_reentry`, append only a `note` describing the return to manuscript work.
 
 **If returning to Phase 3 (fundamental rethink):**
 - `current_phase`: `3`
 - `sub_step`: `null`
 - `current_round`: unchanged — **round numbers are monotonic and NEVER reset** (see `prompts/conventions.md` "Round Numbering"); the new plan's first round continues the sequence
+- `current_round_short_name`: unchanged until Phase 3 confirms the new plan, increments the round, and clears it
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
-- `experiment.status`: `"completed"`
+- `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
+- Do not reserve or activate a new experimental round during re-entry planning. Phase 3 owns the increment and empty short name after the new plan is confirmed; activation follows that confirmed plan.
 - Keep all existing round folders and roadmap entries; add a plan-boundary marker (section break) to `research_roadmap.md`
 - Append a `new_research_plan` event to `phase_history` (entry format in `prompts/conventions.md`) with explanation of why rethink was needed

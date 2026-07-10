@@ -289,5 +289,5 @@ After user approves and changes are implemented:
 
 **Routing after fixes:**
 - Text changes only → `current_phase`: `7`, `phase_status`: `"not_started"`. Stay in Phase 7/8 revision loop.
-- New experiments needed → `current_phase`: `6`, `sub_step`: `null`, `phase_status`: `"not_started"`. Phase 6 enters its **Phase 8 re-entry mode** (see `prompts/06_result_analysis.md`): it skips the analysis steps and goes straight to Round Planning, seeding candidate directions from `manuscript/review_synthesis.md`. `current_round` is incremented in Phase 6 when the new round is confirmed — do NOT increment it here.
+- New experiments needed → `current_phase`: `6`, `sub_step`: `"review_reentry"`, `phase_status`: `"not_started"`. Phase 6 enters its **Phase 8 re-entry mode** (see `prompts/06_result_analysis.md`): it skips the analysis steps and goes straight to Round Planning, seeding candidate directions from `manuscript/review_synthesis.md`. Preserve both `current_round` and `current_round_short_name` here; they identify the last completed round until Phase 6 confirms and persists the next round. Do NOT increment or rename the round in Phase 8.
 - All issues resolved → `phase_status`: `"completed"`, `project_status`: `"completed"`, `manuscript.status`: `"final"` (enum in `prompts/conventions.md`). Manuscript is ready for submission.

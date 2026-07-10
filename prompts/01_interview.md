@@ -16,6 +16,7 @@ Direct conversation with the user. No agents or subagents needed.
    - `current_phase`: `1`
    - `sub_step`: `null`
    - `current_round`: `0`
+   - `current_round_short_name`: `""`
    - `phase_status`: `"in_progress"`
    - `project_status`: `"active"`
    - `created_at` / `updated_at`: current ISO 8601 UTC timestamp
@@ -117,6 +118,7 @@ Field names and enum values follow `prompts/conventions.md`. After user confirms
 - `current_phase`: `2`
 - `sub_step`: `null`
 - `current_round`: `0`
+- `current_round_short_name`: `""`
 - `phase_status`: `"not_started"`
 - `project_status`: `"active"`
 - Populate `topic.broad_topic`, `topic.target_dataset`, etc.

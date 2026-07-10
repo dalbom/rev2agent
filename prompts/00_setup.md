@@ -1,287 +1,258 @@
 # Phase 0: Setup
 
 ## Objective
-Configure Rev2Agent for the user's environment. This phase runs **once** on first launch and is skipped on subsequent sessions.
+
+Configure Rev2Agent without putting provider credentials in the conversation or
+in repository files. This phase runs on first launch, during security migration,
+or when the user asks to reconfigure.
 
 ## Mode
+
 Direct conversation with the user.
 
 ## When This Phase Runs
-- On first launch, when `.rev2agent_config.json` does not exist at the repository root.
-- If the user explicitly requests reconfiguration (e.g., "reconfigure", "update setup").
+
+- `.rev2agent_config.json` does not exist.
+- The config is not schema version 2, contains a legacy `api_key` value field,
+  or has an invalid security setting.
+- The user requests reconfiguration.
+
+Security migration happens before project discovery or phase routing. A config
+file's existence alone is not proof that setup is safe or complete.
 
 ## Design Principle
 
-**Make setup as effortless as possible.** The user should never have to look up API base URLs, environment variable naming conventions, or model IDs. If they paste a key, we figure out the rest. If they type a sentence, we parse it.
+Make provider setup straightforward while keeping secret values outside chat,
+configuration, logs, and command history. The user selects providers; Rev2Agent
+stores only the names of environment variables that the provider client should
+resolve later.
 
 ## Steps
 
 ### 0.1 Welcome
 
-```
+```text
 Welcome to Rev2Agent
-════════════════════
+====================
 
 Reviewer 2 is now your agent.
 
-Rev2Agent is an autonomous research assistant that takes a vague 
-research idea and iterates through literature search, experiment 
-design, execution, analysis, and manuscript writing.
-
-Let me set up a few things first. This only takes a minute.
+Rev2Agent can run entirely with host-native reviewers. Optional external
+providers add perspectives to "major revision" discussions.
 ```
 
-### 0.2 External API Keys
+### 0.2 External Provider Access (optional)
 
-Present one simple question:
+Present this notice before asking which providers to configure:
 
+```text
+External model access is optional.
+
+Do not paste API keys here. Set credentials as environment variables outside
+this chat, then tell me only which provider names you want to enable. Type
+"skip" for host-only mode.
+
+Configured external discussion models may receive research questions,
+manuscript excerpts, or decision context during an explicitly requested
+"major revision" panel. Configuring a provider does not permit uploading
+experiment source code; that has a separate opt-in and is disabled by default.
 ```
-External LLM Access (optional)
-──────────────────────────────
-Rev2Agent works fine on its own, but it can also consult other AI 
-models (GPT, Gemini, etc.) for independent second opinions.
 
-If you have any API keys, just paste them below — I'll figure out 
-which provider they belong to. You can paste multiple keys at once.
+Use these standard references:
 
-If you don't have any, just type "skip".
-```
-
-**Key auto-detection:** When the user pastes a key (or multiple keys in any format), identify the provider by prefix:
-
-| Key Prefix | Provider | API Base |
+| Provider | Environment reference | API base |
 |---|---|---|
-| `sk-or-` | OpenRouter | `https://openrouter.ai/api/v1/chat/completions` |
-| `sk-ant-` | Anthropic | `https://api.anthropic.com` |
-| `sk-` (not `sk-or-`, not `sk-ant-`) | Ambiguous — **ask the user to confirm the provider** | Per confirmed provider (e.g., OpenAI: `https://api.openai.com/v1/chat/completions`) |
-| `AIzaSy` | Google AI Studio | `https://generativelanguage.googleapis.com/v1beta` |
-| `xai-` | xAI (Grok) | `https://api.x.ai/v1/chat/completions` |
-| Unknown | Ask the user which provider | — |
+| OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| OpenAI | `OPENAI_API_KEY` | `https://api.openai.com/v1` |
+| Google AI Studio | `GEMINI_API_KEY` (accept `GOOGLE_API_KEY`) | `https://generativelanguage.googleapis.com/v1beta` |
+| xAI | `XAI_API_KEY` | `https://api.x.ai/v1` |
+| Anthropic | `ANTHROPIC_API_KEY` | `https://api.anthropic.com` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` |
 
-**Ambiguous `sk-` keys:** Several providers (OpenAI, DeepSeek, and others) issue keys starting with plain `sk-`. Never assume OpenAI — ask one short question ("This looks like an OpenAI-style key — is it OpenAI, DeepSeek, or another provider?") and use the confirmed provider's API base.
+For a custom OpenAI-compatible provider, ask only for its provider name, API
+base, and environment-variable name. The environment name must match
+`[A-Za-z_][A-Za-z0-9_]*`. Never ask for or accept the value.
 
-The flagship model for each provider is selected automatically in Step 0.3 (not hardcoded here).
+#### Credential handling rules
 
-**Host-provider note:** If the pasted key belongs to the same provider as the current host agent, ask whether the user wants to keep it for explicit external API calls or skip it as redundant. Do not assume a provider is always redundant across hosts.
+- Check environment-variable **presence only**. Do not return its length,
+  prefix, suffix, hash, or value.
+- Never print, echo, summarize, or interpolate secret values into output,
+  errors, prompts, logs, URLs, filenames, or command arguments.
+- Resolve a credential inside the provider-calling process and use an
+  authentication header. Do not place it in a shell command or query string.
+- Store only `api_key_env`, never a credential value.
+- If a referenced variable is missing, mark that provider unavailable and ask
+  the user to set it outside chat or continue without it. Do not ask them to
+  prove the value in chat.
 
-**Handling natural language input:** The user might type any of these:
-- `sk-or-v1-abc123` (just the key)
-- `OpenRouter: sk-or-v1-abc123` (labeled)
-- `Google API Key - AIzaSyABC123` (natural language)
-- `here are my keys: sk-or-v1-abc123 and AIzaSyABC123` (multiple at once)
-- `I have OpenRouter and Gemini` (no keys yet — ask them to paste)
+For a selected provider whose reference is present, test connectivity with its
+model-listing endpoint. The calling process resolves the environment variable
+internally; logs report only provider name, success/failure, and model count.
+An authentication failure should say that the referenced variable was rejected,
+without revealing any credential material.
 
-Parse whatever format they use. Extract keys, auto-detect providers, confirm with user.
+If the user says `skip`, configure host-only mode and continue.
 
-**After detecting each key:**
-1. Test connectivity by calling the provider's **model-listing endpoint** (e.g., OpenAI-compatible `GET /models`, OpenRouter `GET /api/v1/models`, Google AI Studio `GET /v1beta/models`). No model needs to be selected yet — this validates the key and returns the model list that Step 0.3 uses for selection.
-2. If the listing call succeeds: `✅ [Provider] connected — [N] models listed`
-3. If it fails: `❌ [Provider] key didn't work. Check the key and try again, or skip.`
-4. Store the key in `.rev2agent_config.json` (the config file is gitignored).
+### 0.3 Model Selection
 
-After Step 0.3 has selected each provider's flagship model, optionally confirm it with a single 1-token chat call and report: `✅ [Provider] — [model] available`.
+For each available provider, list models and choose one current flagship-tier
+text model. Exclude obvious budget, embedding, audio, image, free, and unusually
+expensive reasoning-only variants. Prefer a stable model; use a preview only
+when no stable peer exists. Do not hardcode the examples in this prompt as a
+permanent model list.
 
-**If the user says "skip":** Note that all discussions will use host-native review agents only. This is perfectly fine — move on.
+Role assignment is separate from credential availability:
 
-### 0.3 Model Selection (automatic — do NOT ask the user)
+- **Discussion:** configured external models may join an explicitly requested
+  `major revision` panel after the disclosure in Step 0.2.
+- **Code verification:** use a host-native adversarial reviewer by default.
+  An external reviewer is eligible only under Step 0.4.
 
-For each configured provider, select the **flagship-tier** model automatically. Do not ask the user which model to use.
+### 0.4 External Code Review (separate opt-in)
 
-#### What is "flagship tier"?
+Set `external_code_review` to the JSON boolean `false` unless the user
+explicitly asks to enable external review after being told that full unpublished
+source code may leave the host and be processed under the provider's terms.
 
-Each major provider has a model lineup. Flagship tier is the **primary high-capability model** — not the cheapest, not the most expensive. Concretely:
+Only the JSON boolean exactly `true` is an opt-in. Missing values, strings such
+as `"true"`, numbers, null, and all other invalid values mean `false`. Enabling
+this setting does not override a missing provider environment reference.
 
-| Tier | Characteristics | Examples (as of 2026, will change) |
-|---|---|---|
-| Flagship | Provider's main high-capability model. Balanced cost/performance. | Claude Opus, GPT-5.4, Gemini Pro, Grok-3 |
-| Budget | Smaller/faster/cheaper variants | Claude Haiku, GPT-4.1-mini, Gemini Flash |
-| Premium | Reasoning-heavy or extended-thinking variants, significantly more expensive | o3-pro, Claude Opus with extended thinking at max budget |
+When the setting is false, write `roles.verification` as the host-native
+adversarial reviewer. When the user explicitly opts in, select one configured
+provider/model whose environment reference is present and record it in
+`roles.verification`; if no such provider is available, keep the setting false
+and the role host-native. Do not leave an external verification role in a
+config whose opt-in is false.
 
-**Select flagship tier. Exclude budget and premium.**
+The user can change this later with `reconfigure`. Never infer consent from the
+presence of an environment variable or from enabling external discussions.
 
-#### How to identify the flagship model
+### 0.5 Discussion Panel Size
 
-Apply this filter pipeline to all available models, regardless of provider:
+Ask one question, defaulting to 3:
 
-```
-Step 1: List all models
-  - If the provider supports a model listing API (e.g., OpenRouter GET /api/v1/models),
-    fetch the full list with pricing. Reuse the list already fetched during the
-    Step 0.2 connectivity test where possible.
-  - If not (e.g., Google AI Studio), check the provider's documentation or test
-    known model names.
-
-Step 2: Exclude by name pattern
-  Remove any model whose ID contains these substrings (case-insensitive):
-    mini, nano, flash, lite, fast, free, oss, audio, image, embed
-
-Step 3: Exclude by pricing
-  Remove models outside the flagship price band:
-    - Input cost < $1/M tokens → budget tier, exclude
-    - Input cost > $10/M tokens → premium tier, exclude
-  If pricing is unavailable, keep the model and verify in Step 5.
-
-Step 4: Pick the latest version per provider family
-  Group remaining models by provider family (openai, google, anthropic, x-ai, etc.).
-  Within each family, pick the model with the highest version number.
-  Ignore date-stamped variants (e.g., -2024-08-06) and preview suffixes —
-  treat "preview" as equivalent to the base model if no stable version exists.
-
-Step 5: Sanity check
-  The final selection should have at most one model per provider family.
-  Each should cost roughly $1-10/M input tokens.
-  If something looks off (e.g., a model slipped through that's clearly budget),
-  drop it and pick the next best.
+```text
+How many host-native review agents should join the "major revision" panel?
+[default: 3]
 ```
 
-#### Role assignment
+Store the result as `major_revisions_panel.host_agents`. Legacy
+`claude_agents` may be read as a fallback, but new writes use `host_agents`.
 
-- **Verification** (experiment code review): Pick one external flagship model from a provider other than the current host provider when possible. Independent review from a different provider is more valuable than same-provider review. If multiple such flagships exist, pick any one.
-- **Discussion** ("major revision" panel): Include ALL selected flagship models across providers for maximum diversity, plus host-native review agents. One model per provider, no duplicates.
-- **Host-native review agents** are always included in discussion (count asked in Step 0.4, default 3). They are not selected through this pipeline — they come from the current host agent environment.
+### 0.6 LaTeX Check
 
-#### Examples
+Check for `tectonic` silently. Report whether it is available; do not block
+setup because it is absent.
 
-Assuming the filter pipeline selects: `openai/gpt-5.4`, `google/gemini-3.1-pro-preview`, `x-ai/grok-4`:
+### 0.7 Environment Summary
 
-```
-verification: openai/gpt-5.4 (external)
-discussion:   3x host-native review agents + openai/gpt-5.4 + google/gemini-3.1-pro-preview + x-ai/grok-4
-```
+Report provider names, selected model IDs, their `api_key_env` references,
+discussion composition, external code review as enabled/disabled, host reviewer
+count, and LaTeX status. Never include environment values.
 
-One external model only:
-```
-verification: openai/gpt-5.4
-discussion:   3x host-native review agents + openai/gpt-5.4
-```
+Example:
 
-No external models:
-```
-verification: host-native reviewer (with adversarial prompt)
-discussion:   3x host-native review agents only
-```
+```text
+Rev2Agent - Ready
 
-#### Show result, don't ask
+External discussions:
+  OpenRouter - openai/gpt-5.4 (credential reference: OPENROUTER_API_KEY)
 
-Display the selected models and role assignments in the environment summary. If the user disagrees, they can override. Do not proactively ask.
+Code verification:
+  Host-native adversarial reviewer (external code review disabled)
 
-### 0.4 Discussion Panel Size (one question, default 3)
-
-Ask exactly one question:
-
-```
-How many host-native review agents should join the "major revision" 
-discussion panel? [default: 3]
+Configuration saved. Type "reconfigure" to change these settings.
 ```
 
-If the user presses enter, says "default", or gives no usable number, use 3. Store the answer as `major_revisions_panel.host_agents` in the config file. Do not ask any follow-up about this setting.
+Then proceed to Phase 1.
 
-### 0.5 LaTeX Check (silent)
+## Secure Config Write Protocol
 
-Run automatically without asking:
+Use this protocol for setup and migration:
 
-```bash
-which tectonic 2>/dev/null || ([ -f ./tectonic ] && echo "found") || echo "not found"
-```
+1. Build a sanitized version-2 object in memory. It must contain environment
+   names only and no secret values.
+2. Create a same-directory temporary file with mode `0600` **before writing any
+   content** where the platform supports POSIX permissions. Never write first
+   and tighten permissions later.
+3. Write, flush, and sync the temporary file, then atomically replace
+   `.rev2agent_config.json`.
+4. Apply mode `0600` to the final path where supported and verify the final
+   permissions. Report a warning if the platform cannot enforce them.
+5. Ensure `.rev2agent_config.json` remains in `.gitignore` because it is local
+   machine configuration, even though version 2 contains no credential values.
 
-Only mention the result in the summary. Don't ask a question about it.
+## Legacy Configuration Migration
 
-### 0.6 Environment Summary
+Run this migration before normal startup whenever a config is version 1,
+contains a legacy `api_key` value field, or lacks the version-2 privacy fields.
 
-```
-Rev2Agent — Ready
-═══════════════════
+1. Restrict the existing file to mode `0600` where supported before inspecting
+   its structure.
+2. Detect only whether a legacy value field exists. **Never display, print, use,
+   transmit, test, or copy the legacy value.** Do not use it for connectivity.
+3. Treat every affected external provider as unavailable immediately. Map its
+   provider name to the standard `api_key_env` reference and check that
+   environment variable's presence only.
+4. If every retained provider has its referenced variable set, build a sanitized
+   version-2 object: preserve nonsecret provider bases, model choices, discussion
+   roles, panel size, and LaTeX settings; remove every legacy value field; add
+   `api_key_env`; and set missing, non-boolean, or invalid
+   `external_code_review` to `false`. When it is false, reset
+   `roles.verification` to host-native. Write it with the Secure Config Write
+   Protocol.
+5. If any reference is missing, pause external-provider migration and ask the
+   user either to set it outside chat and resume, or to explicitly disable and
+   scrub that provider. **Do not silently delete** what may be the user's only
+   remaining copy. Until the choice is resolved, make no external calls and do
+   not continue normal project routing.
+6. Recommend that the user rotate every legacy credential because it may have
+   been exposed in prior chat history or local plaintext storage.
 
-External models:
-  ✅ OpenRouter — gpt-5.4 (flagship)
-  ✅ Google AI Studio — gemini-3.1-pro-preview (flagship)
-
-Roles:
-  Verification: gpt-5.4 (external)
-  Discussion:   3 host-native review agents + gpt-5.4 + gemini-3.1-pro-preview
-
-LaTeX: ✅ tectonic found  /  ⚠️ Not installed yet (needed for Phase 7)
-       Install later: curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
-
-Configuration saved. Type "reconfigure" anytime to change these settings.
-```
-
-If no external models:
-```
-Rev2Agent — Ready
-═══════════════════
-
-External models: None configured (host-only mode)
-  Tip: You can add API keys anytime by typing "reconfigure"
-
-"Major Revision" panel: 3 host-native review agents
-
-LaTeX: ✅ tectonic found  /  ⚠️ Not installed yet
-
-Configuration saved.
-```
-
-### 0.7 Quick Guide
-
-```
-How Rev2Agent works
-────────────────────
-Phase 1  Topic Interview      — Tell me your research idea
-Phase 2  Literature Search    — I find papers and identify gaps
-Phase 3  Research Plan        — We define the research question  
-Phase 4  Experiment Design    — I plan the experiments
-Phase 5  Experiment Execution — I write and run the code
-Phase 6  Result Analysis      — I analyze what happened
-Phase 7  Manuscript Writing   — I draft the paper
-Phase 8  Review Panel         — AI reviewers critique the draft
-
-Commands:
-  "major revision"   — Convene multi-model discussion panel
-  "reconfigure"      — Re-run this setup
-
-At key moments, Reviewer 2 will weigh in with judgments.
-Don't take it personally — Reviewer 2 never does.
-
-Let's begin. What research area are you interested in?
-```
-
-Then proceed to Phase 1 (Topic Interview).
+Migration must never turn provider availability into permission for external
+code review. The default remains `false`.
 
 ## Config File Schema
 
-Save to `.rev2agent_config.json` at the repository root. **This file must be added to `.gitignore`** as it contains API keys.
+Save this nonsecret, machine-local object to `.rev2agent_config.json`:
 
 ```json
 {
-  "version": 1,
-  "setup_completed_at": "2026-04-09T12:00:00Z",
+  "version": 2,
+  "setup_completed_at": "2026-07-10T00:00:00Z",
+  "external_code_review": false,
   "providers": [
     {
       "name": "openrouter",
-      "api_base": "https://openrouter.ai/api/v1/chat/completions",
-      "api_key": "sk-or-v1-...",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
       "flagship_model": "openai/gpt-5.4"
     },
     {
       "name": "google",
       "api_base": "https://generativelanguage.googleapis.com/v1beta",
-      "api_key": "AIzaSy...",
-      "flagship_model": "gemini-3.1-pro-preview"
-    },
-    {
-      "name": "anthropic",
-      "api_base": "https://api.anthropic.com",
-      "api_key": "sk-ant-...",
-      "flagship_model": "claude-opus-4-5"
+      "api_key_env": "GEMINI_API_KEY",
+      "flagship_model": "gemini-pro"
     }
   ],
   "roles": {
-    "verification": {"provider": "openrouter", "model": "openai/gpt-5.4"},
-    "discussion": ["openai/gpt-5.4", "gemini-3.1-pro-preview"]
+    "verification": {
+      "provider": "host-native",
+      "model": "adversarial-reviewer"
+    },
+    "discussion": [
+      "openai/gpt-5.4",
+      "gemini-pro"
+    ]
   },
   "major_revisions_panel": {
     "host_agents": 3,
-    "external_models": ["openai/gpt-5.4", "gemini-3.1-pro-preview"]
+    "external_models": [
+      "openai/gpt-5.4",
+      "gemini-pro"
+    ]
   },
   "latex": {
     "tectonic_path": "tectonic"
@@ -289,12 +260,12 @@ Save to `.rev2agent_config.json` at the repository root. **This file must be add
 }
 ```
 
-The `providers` array can be empty (host-only mode). Keys are stored directly in this file since it is gitignored — no need for environment variables.
-
-Legacy key `claude_agents` is read as `host_agents` if present.
+The `providers` array may be empty. `api_key_env` stores a variable name, not a
+secret. External code review remains host-native unless the top-level opt-in is
+exactly `true` and Phase 5 also confirms that the selected provider reference is
+present.
 
 ## State Update
 
-Phase 0 does NOT create a `.research_state.json` (that happens in Phase 1). It only creates `.rev2agent_config.json` and ensures `.gitignore` includes it.
-
-After setup, proceed directly to the Startup Protocol.
+Phase 0 does not create `.research_state.json`. It writes or migrates only
+`.rev2agent_config.json`, then returns to the Startup Protocol.

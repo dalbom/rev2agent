@@ -59,23 +59,26 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
 **Every time this session starts, do the following FIRST:**
 
-0. **Check setup**: If `.rev2agent_config.json` does not exist at the repository root, run Phase 0 by reading `prompts/00_setup.md`. This only happens once; subsequent sessions skip this step.
+0. **Check setup and security schema**: Before project discovery, read only the structure of `.rev2agent_config.json`. Run Phase 0 from `prompts/00_setup.md` if the file is missing, its `version` is not `2`, it contains a legacy `api_key` value field, or required version-2 privacy fields are invalid. Never use a legacy value. Normal startup continues only after the config is safely migrated.
 1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`. If `_new_project_draft/` exists, an interview was interrupted — offer to resume it or discard the draft (see `prompts/01_interview.md`).
 2. **If no projects exist**: Begin at Phase 1 (Topic Interview).
 3. **If projects exist**: List them with a brief status summary and ask the user whether to resume one or start a new project.
-4. **If resuming**: Follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, read that project's `.research_state.json`, determine current phase and status, then:
-   - `not_started`: read that phase's prompt file and begin the phase.
-   - `in_progress`: check whether the process is still running; update state accordingly.
-   - `waiting_for_user`: re-present the summary and ask for confirmation.
-   - `completed`: advance to the next phase.
-   - `failed`: diagnose the failure and propose recovery options.
+4. **If resuming**: Read that project's `.research_state.json`. **Check `project_status` before dispatching on `phase_status`** and before creating a session lock:
+   - If `project_status` is `"completed"`, report final artifacts and do not advance.
+   - If `project_status` is `"archived"`, report that it is archived and do not mutate or advance.
+   - Only when `project_status` is `"active"`, follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, then determine the current phase and dispatch on `phase_status`:
+      - `not_started`: read that phase's prompt file and begin the phase.
+      - `in_progress`: check whether the process is still running; update state accordingly.
+      - `waiting_for_user`: re-present the summary and ask for confirmation.
+      - `completed`: advance to the next phase.
+      - `failed`: diagnose the failure and propose recovery options.
 5. **If starting new**: Begin at Phase 1.
 
 ## Phase Overview
 
 | Phase | Name | Codex Handling Mode | User Input | Prompt File |
 |-------|------|---------------------|-----------|-------------|
-| 0 | Setup | Direct | API keys | `prompts/00_setup.md` |
+| 0 | Setup | Direct | Provider names (optional) | `prompts/00_setup.md` |
 | 1 | Topic Interview | Direct | Conversational | `prompts/01_interview.md` |
 | 2 | Literature Search | Parallel subagents if available; otherwise direct synthesis | Confirm topic | `prompts/02_literature_search.md` |
 | 3 | Research Plan | Direct | Confirm plan | `prompts/03_research_plan.md` |
@@ -116,13 +119,14 @@ Phase 4 (design) -> Phase 5 (execute) -> Phase 6 (analyze + plan next)
 
 **Phase 5 direct skip:** When Phase 6 determines that the next round requires NO design changes, it may route directly to Phase 5, skipping Phase 4. This is the only valid case for skipping Phase 4. The skip must be logged as a `phase4_skipped` event in `phase_history` (state-update details in `prompts/06_result_analysis.md`).
 
-**`sub_step` field:** When Phase 6 routes back to Phase 4, it sets `sub_step` to indicate the mode:
+**`sub_step` field:** Phase 6 uses `sub_step` to indicate its routing mode:
 - `null`: Normal experiment design for the next round
 - `"refinement"`: Evidence-driven refinement before designing experiments (see `prompts/04_experiment_design.md` "Refinement Mode")
+- `"review_reentry"`: Phase 6-only persisted marker for review-driven round planning after Phase 8
 
 `sub_step` is reset to `null` when Phase 5 begins. The trigger criteria for `"refinement"` (mandatory after Round 1, 10+pp metric deviation, positioning change, confound discovery, default-config change) are owned by `prompts/06_result_analysis.md` — see its "When to set `sub_step: \"refinement\"`" section.
 
-**Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6, which skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
+**Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6 with `sub_step: "review_reentry"`; Phase 6 skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
 
 ## State Management
 
@@ -230,12 +234,9 @@ Where shared prompts refer to starting a new session, interpret that as:
 
 ### External Models
 
-External LLM providers and models are configured during Phase 0 and stored in `.rev2agent_config.json`. Rev2Agent may use any configured external models for:
-- `major revision` discussions
-- independent experiment-code verification
-- stuck or ambiguous research decisions
+External LLM providers and models are configured during Phase 0. `.rev2agent_config.json` stores only each provider's `api_key_env` environment-variable name, never its credential value. External discussion models may receive research context only when the user explicitly triggers `major revision`, under the Phase 0 disclosure. Ad-hoc research decisions use host-native reviewers.
 
-Routine file editing, script execution, and status work do not require external models.
+Experiment-code verification is separate. Full code may leave the host only when `external_code_review` is the JSON boolean exactly `true`, `roles.verification` selects a configured external provider/model, and that provider's `api_key_env` is present. A missing, false, or invalid setting means false and requires a host-native adversarial reviewer. Never send code externally in that fallback. Routine file editing, script execution, and status work do not require external models.
 
 Do not assume Anthropic is redundant in all hosts. Follow the setup logic in `prompts/00_setup.md`, but interpret provider redundancy in the context of the current host environment.
 
@@ -248,7 +249,7 @@ The goal is to launch a structured multi-perspective review of the current resea
 Preferred Codex behavior:
 1. Show the panel composition before starting.
 2. Use multiple independent Codex review perspectives or subagents if the host supports them cleanly (count from the `host_agents` setting configured in Phase 0, default: 3; legacy configs may use the key `claude_agents`).
-3. Query any configured external models from `.rev2agent_config.json` when available and useful.
+3. Query configured external discussion models only when their `api_key_env` references are present and the Phase 0 research-content disclosure applies. This does not grant permission to send source code.
 4. Synthesize findings and present a single integrated recommendation to the user.
 
 Fallback behavior:

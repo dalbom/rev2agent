@@ -222,7 +222,7 @@ If user has concerns about time/resources, discuss alternatives:
 
 ## Round Naming
 
-When the design is confirmed, Phase 4 assigns the round's `short_name` — 1-3 words in snake_case describing the round (e.g., `baseline`, `ablation_depth`). Naming rules are in `prompts/conventions.md` "Round Numbering". (For identical-config rounds that skip Phase 4 entirely, Phase 6 assigns the `short_name` during round planning instead.)
+When the design is confirmed, Phase 4 assigns the round's `short_name` — 1-3 words in snake_case describing the round (e.g., `baseline`, `ablation_depth`) — and atomically persists it as `current_round_short_name` before creating round-specific files. Naming rules are in `prompts/conventions.md` "Round Numbering". (For identical-config rounds that skip Phase 4 entirely, Phase 6 assigns the `short_name` during round planning instead.)
 
 ## Phase Summary
 
@@ -240,6 +240,7 @@ After user confirms:
 - `current_phase`: `5`
 - `sub_step`: `null` (refinement complete if applicable)
 - `current_round`: unchanged (already set by Phase 3 or Phase 6)
+- `current_round_short_name`: the confirmed round `short_name`
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - Populate `experiment.plan`, `experiment.estimated_time_hours`, `experiment.hardware_requirements`
