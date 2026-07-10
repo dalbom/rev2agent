@@ -13,6 +13,27 @@ def read(relative_path):
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def between(text, start, end=None):
+    """Return prompt text after *start* and before *end*."""
+    _, separator, tail = text.partition(start)
+    if not separator:
+        raise AssertionError(f"missing section start: {start}")
+    if end is None:
+        return tail
+    body, separator, _ = tail.partition(end)
+    if not separator:
+        raise AssertionError(f"missing section end: {end}")
+    return body
+
+
+def state_line(section, field):
+    prefix = f"- `{field}`:"
+    return next(
+        (line.strip() for line in section.splitlines() if line.strip().startswith(prefix)),
+        None,
+    )
+
+
 class TestCanonicalRoundState(unittest.TestCase):
     def test_schema_persists_current_round_short_name(self):
         conventions = read("prompts/conventions.md")
@@ -32,19 +53,42 @@ class TestCanonicalRoundState(unittest.TestCase):
 
     def test_legacy_round_identity_migration_is_unambiguous(self):
         conventions = read("prompts/conventions.md")
-        self.assertIn("summaries/round{current_round}_*/", conventions)
-        self.assertIn("exactly one", conventions)
-        self.assertRegex(
+        migration = between(
             conventions,
+            "### Legacy round-identity migration",
+            "## Round Numbering",
+        )
+        self.assertIn("summaries/round{current_round}_*/", migration)
+        self.assertIn("exactly one", migration)
+        self.assertRegex(
+            migration,
             re.compile(r"zero or multiple.*STOP.*ask", re.IGNORECASE | re.DOTALL),
         )
         self.assertRegex(
-            conventions,
+            migration,
             re.compile(
                 r"persist.*current_round_short_name.*atomically",
                 re.IGNORECASE | re.DOTALL,
             ),
         )
+
+    def test_legacy_migration_distinguishes_missing_from_present_empty(self):
+        conventions = read("prompts/conventions.md")
+        migration = between(
+            conventions,
+            "### Legacy round-identity migration",
+            "## Round Numbering",
+        )
+        self.assertIn(
+            "Migration applies only when the `current_round_short_name` key is absent",
+            migration,
+        )
+        self.assertIn(
+            'If the key is present with value `""`, do not run migration',
+            migration,
+        )
+        self.assertIn("pending Phase 4 naming", migration)
+        self.assertNotIn("absent or empty", migration)
 
 
 class TestRoundScopedExperimentExecution(unittest.TestCase):
@@ -58,22 +102,39 @@ class TestRoundScopedExperimentExecution(unittest.TestCase):
             self.phase5,
         )
         self.assertIn(
-            "experiment/results/{round_dir}/{exp_id}/", self.phase5
+            "run_dir = {round_dir}/{exp_id}/seed{seed}", self.phase5
         )
         self.assertIn(
-            "experiment/checkpoints/{round_dir}/{exp_id}/", self.phase5
+            "experiment/results/{run_dir}/", self.phase5
         )
-        self.assertIn("experiment/logs/{round_dir}/", self.phase5)
         self.assertIn(
-            "experiment/logs/{round_dir}/{exp_id}/attempt_{attempt}_{timestamp}.log",
+            "experiment/checkpoints/{run_dir}/", self.phase5
+        )
+        self.assertIn(
+            "experiment/logs/{run_dir}/attempt_{attempt}_{timestamp}.log",
             self.phase5,
         )
         self.assertIn("immutable", self.phase5.lower())
         self.assertIn("experiment/results/{round_dir}/ALL_COMPLETE", self.phase5)
 
-    def test_project_global_completion_and_unscoped_results_are_forbidden(self):
+    def test_completion_and_failure_markers_are_seed_scoped(self):
+        self.assertIn("experiment/results/{run_dir}/COMPLETED", self.phase5)
+        self.assertIn("experiment/results/{run_dir}/FAILED", self.phase5)
+        self.assertIn("experiment/logs/{run_dir}/current_pid", self.phase5)
+        self.assertIn("experiment ID and seed", self.phase5)
+
+    def test_global_and_experiment_only_run_artifacts_are_forbidden(self):
         self.assertNotIn("experiment/ALL_COMPLETE", self.phase5)
         self.assertNotIn("experiment/results/{exp_id}", self.phase5)
+        self.assertNotIn(
+            "experiment/results/{round_dir}/{exp_id}/COMPLETED", self.phase5
+        )
+        self.assertNotIn(
+            "experiment/results/{round_dir}/{exp_id}/FAILED", self.phase5
+        )
+        self.assertNotIn(
+            "experiment/checkpoints/{round_dir}/{exp_id}/", self.phase5
+        )
 
     def test_round_short_name_is_required_before_execution(self):
         self.assertRegex(
@@ -88,6 +149,16 @@ class TestRoundScopedExperimentExecution(unittest.TestCase):
             re.compile(r"empty.*STOP", re.IGNORECASE | re.DOTALL),
         )
 
+    def test_phase5_migrates_missing_but_not_present_empty_identity(self):
+        self.assertIn(
+            "If the `current_round_short_name` key is absent, STOP and run the legacy migration",
+            self.phase5,
+        )
+        self.assertIn(
+            'If the key is present with value `""`, STOP without migration',
+            self.phase5,
+        )
+
     def test_resume_requires_exact_seed_independent_config_fingerprint(self):
         self.assertIn("resolved_config", self.phase5)
         self.assertIn("config_fingerprint", self.phase5)
@@ -100,6 +171,36 @@ class TestRoundScopedExperimentExecution(unittest.TestCase):
         )
         self.assertIn("seed-independent", self.phase5)
         self.assertIn("config drift", self.phase5.lower())
+
+    def test_phase6_checks_seed_scoped_run_markers(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        self.assertIn(
+            "experiment/results/{round_dir}/*/seed*/COMPLETED", phase6
+        )
+
+
+class TestRoundScopedResultConsumers(unittest.TestCase):
+    def test_phase6_producer_and_phase7_consumers_share_round_path(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        phase7 = read("prompts/07_manuscript_writing.md")
+        result_json = (
+            "{project_dir}/experiment/results/{round_dir}/comparison_table.json"
+        )
+        result_md = (
+            "{project_dir}/experiment/results/{round_dir}/comparison_table.md"
+        )
+        self.assertIn(result_json, phase6)
+        self.assertIn(result_md, phase6)
+        self.assertGreaterEqual(phase7.count(result_json), 2)
+        self.assertIn(
+            "round_dir = round{current_round}_{current_round_short_name}", phase7
+        )
+
+    def test_phase7_has_no_project_global_comparison_table_consumer(self):
+        phase7 = read("prompts/07_manuscript_writing.md")
+        self.assertNotIn(
+            "{project_dir}/experiment/results/comparison_table.json", phase7
+        )
 
 
 class TestReviewReentry(unittest.TestCase):
@@ -169,6 +270,36 @@ class TestRoundIdentityOwnership(unittest.TestCase):
         self.assertIn(
             "Phase 7 and Phase 3 routes preserve `current_round_short_name`", phase6
         )
+
+    def test_phase6_every_exit_route_explicitly_updates_sub_step(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        phase4 = between(
+            phase6,
+            "**If proceeding to another round (Phase 4):**",
+            "**If proceeding directly to Phase 5",
+        )
+        phase5 = between(
+            phase6,
+            "**If proceeding directly to Phase 5",
+            "**If proceeding to manuscript (Phase 7):**",
+        )
+        phase7 = between(
+            phase6,
+            "**If proceeding to manuscript (Phase 7):**",
+            "**If returning to Phase 3 (fundamental rethink):**",
+        )
+        phase3 = between(
+            phase6,
+            "**If returning to Phase 3 (fundamental rethink):**",
+        )
+
+        phase4_sub_step = state_line(phase4, "sub_step")
+        self.assertIsNotNone(phase4_sub_step)
+        self.assertIn("`null`", phase4_sub_step)
+        self.assertIn('`"refinement"`', phase4_sub_step)
+        self.assertEqual(state_line(phase5, "sub_step"), "- `sub_step`: `null`")
+        self.assertEqual(state_line(phase7, "sub_step"), "- `sub_step`: `null`")
+        self.assertEqual(state_line(phase3, "sub_step"), "- `sub_step`: `null`")
 
 
 if __name__ == "__main__":

@@ -83,7 +83,9 @@ Every phase transition appends one entry. Fixed shape:
 
 ### Legacy round-identity migration
 
-Older state files may not contain `current_round_short_name`. When it is absent or empty for an existing active round (`current_round > 0`), infer it only if exactly one directory matches `{project_dir}/summaries/round{current_round}_*/`. Extract the suffix after `round{current_round}_` and validate it against the naming rules below. If zero or multiple directories match, **STOP and ask the user** to identify the active round rather than guessing. The MAIN agent must persist the confirmed or uniquely inferred `current_round_short_name` atomically before any round-specific work continues.
+Migration applies only when the `current_round_short_name` key is absent from a legacy state. For an existing active round (`current_round > 0`), infer it only if exactly one directory matches `{project_dir}/summaries/round{current_round}_*/`. Extract the suffix after `round{current_round}_` and validate it against the naming rules below. If zero or multiple directories match, **STOP and ask the user** to identify the active round rather than guessing. The MAIN agent must persist the confirmed or uniquely inferred `current_round_short_name` atomically before any round-specific work continues.
+
+If the key is present with value `""`, do not run migration. That is intentional while pending Phase 4 naming after Phase 3 or a Phase 6 → Phase 4 route. Phase 4 must persist the chosen name before creating round artifacts; Phase 5 retains its nonempty precondition and must stop if naming was not completed.
 
 ## Round Numbering (monotonic — never reset)
 

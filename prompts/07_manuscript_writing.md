@@ -6,6 +6,16 @@ Write a complete manuscript draft in LaTeX, ready for submission to the target v
 ## Mode
 **Task (subagents)** for parallel section writing, then **direct** for integration and review.
 
+## Current Round Results
+
+Read `current_round` and `current_round_short_name` from `.research_state.json`, require a nonempty short name, and define the Phase 6 result directory once:
+
+```text
+round_dir = round{current_round}_{current_round_short_name}
+```
+
+Use only `{project_dir}/experiment/results/{round_dir}/comparison_table.md` and `{project_dir}/experiment/results/{round_dir}/comparison_table.json` as the current round's collected numerical sources. Do not fall back to a project-global comparison table.
+
 ## Prerequisites
 - All experiment results analyzed and confirmed by user (Phase 6 complete).
 - Figures generated and saved in `{project_dir}/manuscript/figures/`.
@@ -74,9 +84,9 @@ ANTI-HALLUCINATION RULES (MANDATORY):
 
 Before spawning section writers, prepare:
 1. A finalized `references.bib` with all pre-verified entries
-2. The results summary file `{project_dir}/manuscript/results_summary.md`, generated from `{project_dir}/experiment/results/comparison_table.json` (Phase 6 output). This file is given to EVERY section-writing task — it is the only place section writers may copy numbers from.
+2. The results summary file `{project_dir}/manuscript/results_summary.md`, generated from `{project_dir}/experiment/results/{round_dir}/comparison_table.json` (Phase 6 output). This file is given to EVERY section-writing task — it is the only place section writers may copy numbers from.
 3. A list of available figures with their exact filenames and captions
-4. **LaTeX table fragments**: convert `{project_dir}/experiment/results/comparison_table.json` into LaTeX table fragments under `{project_dir}/manuscript/tables/*.tex` (e.g., `main_results.tex`, `ablation.tex`) via a small conversion script. The script must pass the **Code Verification Protocol** (`prompts/05_experiment_execution.md`) before running. **Never hand-type metric values into LaTeX** — every table value flows from `comparison_table.json` through this script.
+4. **LaTeX table fragments**: convert `{project_dir}/experiment/results/{round_dir}/comparison_table.json` into LaTeX table fragments under `{project_dir}/manuscript/tables/*.tex` (e.g., `main_results.tex`, `ablation.tex`) via a small conversion script. The script must pass the **Code Verification Protocol** (`prompts/05_experiment_execution.md`) before running. **Never hand-type metric values into LaTeX** — every table value flows from the round-scoped `comparison_table.json` through this script.
 
 ## Step 3: Parallel Section Writing (via Task Subagents)
 

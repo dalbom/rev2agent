@@ -15,7 +15,7 @@ Keep `sub_step: "review_reentry"` while presenting options. When `review_reentry
 For normal analysis, require a nonempty `current_round_short_name` and define `round_dir = round{current_round}_{current_round_short_name}` once. Use that value for every current-round path below.
 
 ## Prerequisites
-- All (or most) experiments completed (check `{project_dir}/experiment/results/{round_dir}/*/COMPLETED`).
+- All (or most) experiment × seed runs completed (check `{project_dir}/experiment/results/{round_dir}/*/seed*/COMPLETED` and validate each marker's experiment ID, seed, and fingerprint).
 - If some experiments failed, note which ones and whether re-running is needed.
 - **`phase5_experiment_log.md` must exist** in the current round's summary directory. If it does not, write it before proceeding with analysis.
 
@@ -65,8 +65,8 @@ Ours            | 76.2 ± 0.3    | 49.3 ± 0.4    | 29
 
 **Provenance rule:** Every number in sections 6.2-6.7 must trace to a specific entry in `comparison_table.json`. When writing `phase6_results.md`, include the source file path for each claim:
 
-> mIoU improved from 72.3±0.4 (baseline, `round1_seed*/eval.json`)
-> to 76.2±0.3 (ours, `round1_seed*/eval.json`)
+> mIoU improved from 72.3±0.4 (baseline, `round1_baseline/E01/seed*/eval_results.json`)
+> to 76.2±0.3 (ours, `round1_baseline/E02/seed*/eval_results.json`)
 
 ### 6.3 Ablation Study Table
 
