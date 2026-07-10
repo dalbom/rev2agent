@@ -326,17 +326,51 @@ def verify_doi(doi: str, retries: int = 3) -> Tuple[bool, Dict]:
                 data = json.loads(raw)
             except json.JSONDecodeError as e:
                 return False, {"error": f"invalid JSON from doi.org: {str(e)[:80]}"}
-            issued = data.get("issued", {}).get("date-parts", [[None]])
-            year = issued[0][0] if issued and issued[0] else None
-            authors = [
-                f"{a.get('given', '')} {a.get('family', '')}".strip()
-                for a in data.get("author", [])
-            ]
+            if not isinstance(data, dict):
+                data = {}
+
+            year = None
+            issued = data.get("issued")
+            if isinstance(issued, dict):
+                date_parts = issued.get("date-parts")
+                if (
+                    isinstance(date_parts, list)
+                    and date_parts
+                    and isinstance(date_parts[0], (list, tuple))
+                    and date_parts[0]
+                ):
+                    candidate_year = date_parts[0][0]
+                    if isinstance(candidate_year, int) and not isinstance(
+                        candidate_year, bool
+                    ):
+                        year = candidate_year
+                    elif (
+                        isinstance(candidate_year, str)
+                        and candidate_year.isascii()
+                        and candidate_year.isdigit()
+                    ):
+                        year = int(candidate_year)
+
+            authors = []
+            raw_authors = data.get("author", [])
+            if isinstance(raw_authors, list):
+                for author in raw_authors:
+                    if not isinstance(author, dict):
+                        continue
+                    given = author.get("given", "")
+                    family = author.get("family", "")
+                    given = given.strip() if isinstance(given, str) else ""
+                    family = family.strip() if isinstance(family, str) else ""
+                    name = f"{given} {family}".strip()
+                    if name:
+                        authors.append(name)
             return True, {
-                "title": data.get("title", ""),
+                "title": _optional_metadata_string(data.get("title", "")),
                 "year": year,
                 "authors": authors,
-                "venue": data.get("container-title", ""),
+                "venue": _optional_metadata_string(
+                    data.get("container-title", "")
+                ),
             }
         except error.HTTPError as e:
             code = e.code

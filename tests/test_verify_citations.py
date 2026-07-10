@@ -223,6 +223,59 @@ class TestVerifyDoiRetry(unittest.TestCase):
         self.assertIn("network", meta["error"].lower())
 
 
+class TestVerifyDoiMalformedCsl(unittest.TestCase):
+    def test_valid_json_shape_errors_normalize_to_incomplete_metadata(self):
+        malformed_payloads = (
+            [],
+            "garbage",
+            {
+                "title": None,
+                "issued": None,
+                "author": None,
+                "container-title": {"name": "Journal"},
+            },
+            {
+                "title": ["Identity Matters"],
+                "issued": {"date-parts": [None]},
+                "author": [
+                    None,
+                    "bad",
+                    {"given": 42, "family": {}},
+                    {"given": "John", "family": "Smith"},
+                ],
+                "container-title": ["Journal of Testing"],
+            },
+        )
+        for payload in malformed_payloads:
+            with self.subTest(payload=payload), mock.patch.object(
+                    vcb.request, "urlopen", return_value=FakeResponse(payload)):
+                ok, meta = vcb.verify_doi("10.1234/identity", retries=1)
+                self.assertTrue(ok)
+                self.assertIsInstance(meta["title"], str)
+                self.assertIsInstance(meta["authors"], list)
+                self.assertTrue(all(isinstance(a, str) for a in meta["authors"]))
+                self.assertTrue(
+                    meta["year"] is None or isinstance(meta["year"], int)
+                )
+                self.assertIsInstance(meta["venue"], str)
+
+    def test_malformed_csl_preserves_usable_fields(self):
+        payload = {
+            "title": ["Identity Matters"],
+            "issued": {"date-parts": "bad"},
+            "author": [None, {"given": "John", "family": "Smith"}],
+            "container-title": ["Journal of Testing"],
+        }
+        with mock.patch.object(
+                vcb.request, "urlopen", return_value=FakeResponse(payload)):
+            ok, meta = vcb.verify_doi("10.1234/identity", retries=1)
+        self.assertTrue(ok)
+        self.assertEqual(meta["title"], "Identity Matters")
+        self.assertEqual(meta["authors"], ["John Smith"])
+        self.assertIsNone(meta["year"])
+        self.assertEqual(meta["venue"], "Journal of Testing")
+
+
 class TestHttpGetJsonRetry(unittest.TestCase):
     def test_retries_on_5xx_then_succeeds(self):
         calls = []
@@ -1137,6 +1190,41 @@ class TestCitationIdentityRun(unittest.TestCase):
                 any("DOI metadata incomplete" in issue for issue in result["issues"]),
                 result["issues"],
             )
+            external_lookup.assert_called_once()
+
+    def test_malformed_csl_payload_falls_back_to_complete_external_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            bib, texdir = self._paths(Path(td), self.COMPLETE_BIB)
+            malformed_csl = {
+                "title": ["Identity Matters"],
+                "issued": None,
+                "author": None,
+                "container-title": {"name": "Journal of Testing"},
+            }
+            ext_meta = {
+                "title": "Identity Matters",
+                "authors": ["John Smith"],
+                "year": 2024,
+                "venue": "Journal of Testing",
+                "source": "crossref",
+                "title_similarity": 1.0,
+            }
+            external_lookup = mock.Mock(return_value=(True, ext_meta))
+            verifier = vcb.BibtexCitationVerifier(
+                bib_path=bib, tex_dir=texdir, strict=True,
+            )
+            with mock.patch.object(
+                    vcb.request, "urlopen",
+                    return_value=FakeResponse(malformed_csl)), \
+                    mock.patch.object(vcb, "search_external", external_lookup), \
+                    mock.patch.object(vcb.time, "sleep"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                passed = verifier.run()
+            result = verifier.results["paper"]
+            self.assertTrue(passed)
+            self.assertFalse(result["doi_verified"])
+            self.assertTrue(result["ext_verified"])
+            self.assertEqual(result["status"], vcb.BibtexCitationVerifier.EXT_VERIFIED)
             external_lookup.assert_called_once()
 
     def test_incomplete_external_identity_sources_are_unverified(self):
