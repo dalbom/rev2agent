@@ -152,6 +152,22 @@ This enables tracing from any result file back to its generating script, log, an
 
 No other seed representation is valid.
 
+Before Phase 6 makes any numerical claim, run `scripts/collect_results.py` with
+`--fail-on-warnings`. The collector validates this schema and rejects the entire
+file when metadata is missing or ill-typed, the JSON is empty or malformed, the
+top-level value is not an object, or no finite metric exists. `NaN`, infinity,
+and other non-finite values are not valid result evidence. Paths are never used
+to infer a missing round or seed.
+
+Per-seed statistics are grouped only by
+`(round, experiment_id, config_fingerprint, method, group)`. An already
+aggregated file remains visible as provenance but never participates in seed
+aggregation. A duplicate seeded identity exists when two result rows share that
+tuple plus the same `seed`; the collector warns and suppresses that aggregate;
+do not choose one file or average the duplicate observations. Any such warning
+must stop the `--fail-on-warnings` gate until the duplicate provenance is
+resolved.
+
 Additionally, maintain `{project_dir}/experiment/results/{round_dir}/INDEX.md` — a table mapping each result file to its round, script, key metric, and date:
 
 ```markdown

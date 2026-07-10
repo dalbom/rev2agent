@@ -22,7 +22,7 @@ import argparse
 import fnmatch
 import json
 import math
-import re
+import os
 import statistics
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,24 +42,24 @@ def is_own_output(data: Any) -> bool:
     )
 
 
-def find_result_files(results_dir: Path) -> List[Path]:
+def find_result_files(
+    results_dir: Path,
+    excluded_paths: Optional[List[Path]] = None,
+) -> List[Path]:
     """
-    Find all non-empty JSON files under results_dir.
+    Find all JSON candidate paths under results_dir.
 
     Skips this script's own output (comparison_table*.json) so re-runs do
-    not re-ingest the generated table, and tolerates broken symlinks.
+    not re-ingest the generated table. Validation happens later so empty,
+    unreadable, broken, and non-file candidates are counted and reported.
     """
+    excluded = {Path(os.path.abspath(path)) for path in (excluded_paths or [])}
     json_files = sorted(results_dir.rglob("*.json"))
-    found = []
-    for f in json_files:
-        if fnmatch.fnmatch(f.name, "comparison_table*.json"):
-            continue
-        try:
-            if f.stat().st_size > 0:
-                found.append(f)
-        except OSError:
-            continue  # broken symlink or vanished file
-    return found
+    return [
+        path for path in json_files
+        if not fnmatch.fnmatch(path.name, "comparison_table*.json")
+        and Path(os.path.abspath(path)) not in excluded
+    ]
 
 
 def extract_metrics_flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, float]:
@@ -74,7 +74,11 @@ def extract_metrics_flat(data: Dict[str, Any], prefix: str = "") -> Dict[str, fl
             continue
         full_key = f"{prefix}.{key}" if prefix else key
         if isinstance(val, (int, float)) and not isinstance(val, bool):
-            if math.isfinite(val):
+            try:
+                finite = math.isfinite(val)
+            except (OverflowError, TypeError):
+                finite = False
+            if finite:
                 metrics[full_key] = val
         elif isinstance(val, dict):
             metrics.update(extract_metrics_flat(val, full_key))
@@ -126,79 +130,147 @@ def extract_method_rows(data: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def extract_meta(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """
-    Extract the _meta field. Returns (meta, warnings).
+    Extract and validate the mandatory Phase 5 provenance metadata.
 
-    The Phase 5 result file convention makes _meta mandatory: a missing
-    _meta is inferred from top-level fields but reported as a warning,
-    and a malformed (non-dict) _meta degrades to a warning instead of
-    crashing the whole run.
+    Returns ``(meta, errors)``. Callers must reject a result whenever errors
+    are present; provenance is never inferred from file names or result data.
     """
-    warnings: List[str] = []
-    if "_meta" in data:
-        meta = data["_meta"]
-        if isinstance(meta, dict):
-            return meta, warnings
-        warnings.append(
-            f"_meta is not a dict (got {type(meta).__name__}); ignoring it"
-        )
-        return {}, warnings
+    if "_meta" not in data:
+        return {}, ["missing _meta (mandatory per Phase 5 convention)"]
 
-    warnings.append("missing _meta (mandatory per Phase 5 convention); "
-                    "inferring from top-level fields")
-    meta = {}
-    if "timestamp" in data:
-        meta["timestamp"] = data["timestamp"]
-    if "round" in data:
-        meta["round"] = data["round"]
-    return meta, warnings
+    meta = data["_meta"]
+    if not isinstance(meta, dict):
+        return {}, [f"_meta must be an object (got {type(meta).__name__})"]
+
+    errors: List[str] = []
+    required = (
+        "experiment_id",
+        "config_fingerprint",
+        "script",
+        "log_file",
+        "timestamp",
+        "resolved_config",
+        "round",
+        "seed",
+    )
+    for field in required:
+        if field not in meta:
+            errors.append(f"_meta.{field} is required")
+
+    for field in (
+        "experiment_id", "config_fingerprint", "script", "log_file", "timestamp"
+    ):
+        if field in meta and (
+            not isinstance(meta[field], str) or not meta[field].strip()
+        ):
+            errors.append(f"_meta.{field} must be a nonempty string")
+
+    resolved_config = meta.get("resolved_config")
+    if "resolved_config" in meta and not isinstance(resolved_config, dict):
+        errors.append("_meta.resolved_config must be an object")
+
+    round_number = meta.get("round")
+    if "round" in meta and (
+        not isinstance(round_number, int)
+        or isinstance(round_number, bool)
+        or round_number <= 0
+    ):
+        errors.append("_meta.round must be a positive integer")
+
+    if "seed" in meta:
+        seed = meta["seed"]
+        if seed == "aggregate":
+            contributing = (
+                resolved_config.get("contributing_seeds")
+                if isinstance(resolved_config, dict)
+                else None
+            )
+            valid_contributing = (
+                isinstance(contributing, list)
+                and bool(contributing)
+                and all(
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    for value in contributing
+                )
+            )
+            if not valid_contributing:
+                errors.append(
+                    "_meta.resolved_config.contributing_seeds must be a "
+                    "nonempty list of nonnegative integers for aggregate results"
+                )
+        elif (
+            not isinstance(seed, int)
+            or isinstance(seed, bool)
+            or seed < 0
+        ):
+            errors.append(
+                '_meta.seed must be a nonnegative integer or "aggregate"'
+            )
+
+    return meta, errors
 
 
-_ROUND_RE = re.compile(r"(?:^|[_\-/])round(\d+)")
-_SEED_RE = re.compile(r"(?:^|[_\-/])seed[_\-]?(\d+)", re.IGNORECASE)
+def reject_json_constant(value: str) -> None:
+    """Reject NaN and infinities, which are not valid RFC 8259 JSON."""
+    raise ValueError(f"non-standard numeric constant {value}")
 
 
-def infer_round_from_path(path: Path) -> Optional[int]:
-    """Try to infer round number from file path (e.g., round5_combined.json -> 5).
-
-    The 'round' token must start a path component or follow a separator,
-    so e.g. 'playground2' is not misread as round 2.
+def aggregate_seeds(
+    entries: List[Dict[str, Any]],
+    warnings: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
     """
-    for part in [path.stem] + [p for p in path.parts]:
-        m = _ROUND_RE.search(part)
-        if m:
-            return int(m.group(1))
-    return None
+    Aggregate unique seeded entries within one experiment configuration.
 
-
-def infer_seed(meta: Dict[str, Any], path_str: str) -> Optional[int]:
-    """Infer the random seed from _meta or from the file name."""
-    seed = meta.get("seed")
-    if isinstance(seed, int) and not isinstance(seed, bool):
-        return seed
-    m = _SEED_RE.search(Path(path_str).stem)
-    if m:
-        return int(m.group(1))
-    return None
-
-
-def aggregate_seeds(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    Duplicate seed identities are ambiguous evidence. They are retained in
+    the raw entries for diagnosis, but the whole affected aggregate group is
+    suppressed and a provenance warning is emitted.
     """
-    Group seeded entries by (round, method, group) and compute mean/std
-    per metric across seeds. Only groups with >= 2 distinct seeds are
-    aggregated (a single seed has no spread to report).
-    """
+    if warnings is None:
+        warnings = []
+
     groups: Dict[Tuple, List[Dict[str, Any]]] = {}
+    seen: Dict[Tuple, Dict[str, Any]] = {}
+    duplicate_groups = set()
     for entry in entries:
-        if entry.get("seed") is None:
+        seed = entry.get("seed")
+        if not isinstance(seed, int) or isinstance(seed, bool):
             continue
-        key = (entry["round"], entry.get("method"), entry.get("group"))
+        key = (
+            entry["round"],
+            entry["experiment_id"],
+            entry["config_fingerprint"],
+            entry.get("method"),
+            entry.get("group"),
+        )
+        identity = key + (seed,)
+        if identity in seen:
+            duplicate_groups.add(key)
+            warnings.append(
+                "Duplicate seeded result identity "
+                f"(round={entry['round']}, "
+                f"experiment_id={entry['experiment_id']!r}, "
+                f"config_fingerprint={entry['config_fingerprint']!r}, "
+                f"method={entry.get('method')!r}, group={entry.get('group')!r}, "
+                f"seed={seed}) in {seen[identity]['file']} and {entry['file']}; "
+                "aggregate suppressed"
+            )
+        else:
+            seen[identity] = entry
         groups.setdefault(key, []).append(entry)
 
     aggregates: List[Dict[str, Any]] = []
-    for (rnd, method, group), items in sorted(
+    for (rnd, experiment_id, config_fingerprint, method, group), items in sorted(
         groups.items(),
-        key=lambda x: (x[0][0] is None, x[0][0] or 0, str(x[0][1]), str(x[0][2])),
+        key=lambda item: (
+            item[0][0], item[0][1], item[0][2], str(item[0][3]), str(item[0][4])
+        ),
     ):
+        group_key = (rnd, experiment_id, config_fingerprint, method, group)
+        if group_key in duplicate_groups:
+            continue
         seeds = sorted({e["seed"] for e in items})
         if len(seeds) < 2:
             continue
@@ -218,6 +290,8 @@ def aggregate_seeds(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         aggregates.append({
             "round": rnd,
+            "experiment_id": experiment_id,
+            "config_fingerprint": config_fingerprint,
             "method": method,
             "group": group,
             "n_seeds": len(seeds),
@@ -231,6 +305,7 @@ def aggregate_seeds(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def collect_results(
     results_dir: Path,
     metric_keys: Optional[List[str]] = None,
+    excluded_paths: Optional[List[Path]] = None,
 ) -> Dict[str, Any]:
     """
     Collect all results from a directory into a structured format.
@@ -238,30 +313,34 @@ def collect_results(
     Returns:
         {
             "results_dir": str,
-            "files_scanned": int,
+            "files_scanned": int,       # candidates excluding configured/reserved outputs
             "files_with_metrics": int,   # distinct files that yielded entries
             "entries_extracted": int,    # total entry rows extracted
             "entries": [
                 {
                     "file": str (relative path),
-                    "round": int or null,
-                    "seed": int or null,
+                    "round": positive int,
+                    "seed": nonnegative int or "aggregate",
+                    "experiment_id": str,
+                    "config_fingerprint": str,
                     "meta": dict,
                     "metrics": {key: value},
                 }
             ],
-            "aggregates": [  # mean/std across seeds per (round, method, group)
-                {"round", "method", "group", "n_seeds", "seeds", "files",
+            "aggregates": [  # mean/std within one experiment/configuration
+                {"round", "experiment_id", "config_fingerprint", "method",
+                 "group", "n_seeds", "seeds", "files",
                  "metrics": {key: {"mean", "std", "n"}}}
             ],
             "warnings": [str]
         }
     """
-    json_files = find_result_files(results_dir)
+    json_files = find_result_files(results_dir, excluded_paths)
     entries = []
+    aggregation_entries = []
     warnings = []
 
-    def _filter_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
+    def _filter_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
         if not metric_keys:
             return metrics
         filtered = {}
@@ -272,16 +351,31 @@ def collect_results(
         return filtered
 
     for fpath in json_files:
+        rel_path = str(fpath.relative_to(results_dir))
         try:
-            data = json.loads(fpath.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            warnings.append(f"Cannot parse {fpath.name}: {e}")
+            is_file = fpath.is_file()
+        except OSError as error:
+            warnings.append(f"Cannot inspect {rel_path}: {error}")
+            continue
+        if not is_file:
+            warnings.append(f"Cannot read {rel_path}: JSON candidate is not a file")
+            continue
+
+        try:
+            raw_data = fpath.read_text(encoding="utf-8")
+            data = json.loads(
+                raw_data,
+                parse_constant=reject_json_constant,
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError, ValueError) as e:
+            warnings.append(f"Cannot parse {rel_path}: {e}")
             continue
 
         if not isinstance(data, dict):
+            warnings.append(
+                f"Skipped {rel_path}: top-level JSON value must be an object"
+            )
             continue
-
-        rel_path = str(fpath.relative_to(results_dir))
 
         # Never re-ingest this script's own output, even if renamed
         if is_own_output(data):
@@ -294,46 +388,74 @@ def collect_results(
         meta, meta_warnings = extract_meta(data)
         for mw in meta_warnings:
             warnings.append(f"{rel_path}: {mw}")
-        rnd = meta.get("round") or infer_round_from_path(fpath)
-        seed = infer_seed(meta, rel_path)
+        if meta_warnings:
+            continue
+
+        rnd = meta["round"]
+        seed = meta["seed"]
+        experiment_id = meta["experiment_id"]
+        config_fingerprint = meta["config_fingerprint"]
 
         # Mode 1: Extract per-method rows from arrays
         method_rows = extract_method_rows(data)
+        top_metrics = extract_metrics_flat(data)
+        if not method_rows and not top_metrics:
+            warnings.append(
+                f"Skipped {rel_path}: no finite numeric metrics were found"
+            )
+            continue
+
         if method_rows:
             for row in method_rows:
+                unfiltered_entry = {
+                    "file": rel_path,
+                    "round": rnd,
+                    "seed": seed,
+                    "experiment_id": experiment_id,
+                    "config_fingerprint": config_fingerprint,
+                    "method": row["method"],
+                    "group": row["group"],
+                    "meta": meta,
+                    "metrics": row["metrics"],
+                }
+                aggregation_entries.append(unfiltered_entry)
                 metrics = _filter_metrics(row["metrics"])
                 if metrics:
-                    entries.append({
-                        "file": rel_path,
-                        "round": rnd,
-                        "seed": seed,
-                        "method": row["method"],
-                        "group": row["group"],
-                        "meta": meta,
-                        "metrics": metrics,
-                    })
+                    entries.append({**unfiltered_entry, "metrics": metrics})
 
         # Mode 2: Extract top-level scalar metrics
-        top_metrics = extract_metrics_flat(data)
-        top_metrics = _filter_metrics(top_metrics)
         if top_metrics:
-            entries.append({
+            top_entry = {
                 "file": rel_path,
                 "round": rnd,
                 "seed": seed,
+                "experiment_id": experiment_id,
+                "config_fingerprint": config_fingerprint,
                 "method": None,
                 "group": None,
                 "meta": meta,
                 "metrics": top_metrics,
-            })
+            }
+            aggregation_entries.append(top_entry)
+            filtered_top_metrics = _filter_metrics(top_metrics)
+            if filtered_top_metrics:
+                entries.append({**top_entry, "metrics": filtered_top_metrics})
 
+    aggregates = aggregate_seeds(aggregation_entries, warnings)
+    if metric_keys:
+        filtered_aggregates = []
+        for aggregate in aggregates:
+            metrics = _filter_metrics(aggregate["metrics"])
+            if metrics:
+                filtered_aggregates.append({**aggregate, "metrics": metrics})
+        aggregates = filtered_aggregates
     return {
         "results_dir": str(results_dir),
         "files_scanned": len(json_files),
         "files_with_metrics": len({e["file"] for e in entries}),
         "entries_extracted": len(entries),
         "entries": entries,
-        "aggregates": aggregate_seeds(entries),
+        "aggregates": aggregates,
         "warnings": warnings,
     }
 
@@ -468,13 +590,16 @@ def format_markdown(collected: Dict[str, Any]) -> str:
         lines.append("## Seed Aggregates (mean ± std across seeds)")
         lines.append("")
         for agg in aggregates:
-            rnd_label = f"Round {agg['round']}" if agg["round"] is not None else "Unassigned"
+            rnd_label = f"Round {agg['round']}"
             method_label = agg["method"] or "(file-level)"
             mk_sorted = sorted(agg["metrics"].keys())
             short_keys = [_short_key(k) for k in mk_sorted]
 
-            lines.append(f"**{rnd_label} — {method_label}** "
-                         f"(n_seeds={agg['n_seeds']}, seeds={agg['seeds']})")
+            lines.append(
+                f"**{rnd_label} — {agg['experiment_id']} — {method_label}** "
+                f"(config={agg['config_fingerprint']}, "
+                f"n_seeds={agg['n_seeds']}, seeds={agg['seeds']})"
+            )
             lines.append("")
             lines.append("| Metric | mean | std | n |")
             lines.append("|--------|------|-----|---|")
@@ -549,7 +674,8 @@ Output:
     if args.metric_keys:
         metric_keys = [k.strip() for k in args.metric_keys.split(",")]
 
-    collected = collect_results(results_dir, metric_keys)
+    excluded_paths = [Path(args.output_json)] if args.output_json else None
+    collected = collect_results(results_dir, metric_keys, excluded_paths)
 
     # Markdown output
     md_text = format_markdown(collected)

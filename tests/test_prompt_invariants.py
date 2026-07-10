@@ -350,6 +350,23 @@ class TestReviewReentry(unittest.TestCase):
 
 
 class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
+    def test_phase5_requires_strict_collection_and_identity_scoped_aggregation(self):
+        phase5 = read("prompts/05_experiment_execution.md")
+        result_contract = between(
+            phase5,
+            "## Experiment Result File Convention",
+            "## Checkpoint and Marker Configuration Contract",
+        )
+        self.assertRegex(result_contract, r"rejects the entire\s+file")
+        self.assertIn("non-finite", result_contract)
+        self.assertIn(
+            "(round, experiment_id, config_fingerprint, method, group)",
+            result_contract,
+        )
+        self.assertIn("duplicate seeded identity", result_contract)
+        self.assertIn("suppresses that aggregate", result_contract)
+        self.assertIn("--fail-on-warnings", result_contract)
+
     def test_failure_logs_use_seed_scoped_immutable_attempt_paths(self):
         conventions = read("prompts/conventions.md")
         recovery = between(conventions, "## Error Recovery", "## Per-Project Paths")
