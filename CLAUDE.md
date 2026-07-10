@@ -59,7 +59,7 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
 **Every time this session starts, do the following FIRST:**
 
-0. **Check setup**: If `.rev2agent_config.json` does not exist at the repository root, run Phase 0 by reading `prompts/00_setup.md`. This only happens once — subsequent sessions skip this step.
+0. **Check setup and security schema**: Before project discovery, read only the structure of `.rev2agent_config.json`. Run Phase 0 from `prompts/00_setup.md` if the file is missing, its `version` is not `2`, it contains a legacy `api_key` value field, or required version-2 privacy fields are invalid. Never use a legacy value. Normal startup continues only after safe migration.
 1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`. If `_new_project_draft/` exists, an interview was interrupted — offer to resume it or discard the draft (see `prompts/01_interview.md`).
 2. **If no projects exist** → Begin at Phase 1 (Topic Interview).
 3. **If projects exist** → List them with a brief status summary and ask the user:
@@ -87,7 +87,7 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
 | Phase | Name | Mode | User Input | Prompt File |
 |-------|------|------|-----------|-------------|
-| 0 | Setup | Direct | API keys | `prompts/00_setup.md` |
+| 0 | Setup | Direct | Provider names (optional) | `prompts/00_setup.md` |
 | 1 | Topic Interview | Direct | Conversational | `prompts/01_interview.md` |
 | 2 | Literature Search | Parallel Agents | Confirm topic | `prompts/02_literature_search.md` |
 | 3 | Research Plan | Direct | Confirm plan | `prompts/03_research_plan.md` |
@@ -224,14 +224,16 @@ Long-running experiment agents must honor the kill flag, record PIDs, and run on
 
 ### External LLM APIs
 
-External LLM providers and models are configured during Phase 0 and stored in `.rev2agent_config.json`. Rev2Agent supports any OpenAI-compatible API provider and Google AI Studio. **If no external APIs are configured**, Rev2Agent still works — it uses Claude-only discussions with multiple agent perspectives.
+External LLM providers and models are configured during Phase 0. `.rev2agent_config.json` stores only provider `api_key_env` environment-variable names, never credential values. Rev2Agent supports OpenAI-compatible providers, Google AI Studio, and host-only mode.
 
 **When to use external models:**
 - When the user says **"major revision"** — convenes the full multi-model discussion panel.
 - When stuck on a research direction and want an independent assessment.
-- For experiment code verification (see Phase 5 "Code Verification Protocol").
+- For experiment code verification only when the separate privacy gate below passes.
 
 **When NOT to use external models:** Routine tasks (file editing, running scripts, status checks), or when Claude agents alone provide sufficient diversity.
+
+**External code privacy gate:** full or partial unpublished source may leave the host only when `external_code_review` is the JSON boolean exactly `true` and the selected provider's `api_key_env` is present. Missing, false, string-valued, or otherwise invalid settings mean false. Use a host-native adversarial reviewer and do not send code externally in every fallback case. Provider setup for discussion is not code-upload consent.
 
 ### Shared Prompt Compatibility
 
@@ -259,7 +261,7 @@ When the user types `major revision`, launch a multi-model discussion panel:
    gemini-3.1-pro-preview via Google AI Studio
    ```
 2. Spawn Claude agents (count from the `host_agents` setting configured in Phase 0, default: 3 — legacy configs may use the key `claude_agents`; each agent gets a distinct perspective).
-3. Query any external models configured in `.rev2agent_config.json`.
+3. Query configured external discussion models only when their `api_key_env` references are present and the Phase 0 research-content disclosure applies. This does not grant permission to send source code.
 4. Collect all responses, synthesize findings, present to the user.
 5. If no external models are configured, use Claude agents only.
 
@@ -271,7 +273,7 @@ Detailed protocols live with the phase that owns them. Do not duplicate here —
 |----------|---------------|
 | State schema, enums, round numbering, summary checklist, error recovery | `prompts/conventions.md` |
 | Refinement triggers (`sub_step: "refinement"` criteria) | `prompts/06_result_analysis.md` |
-| Experiment Code Verification (3-step, external model review) | `prompts/05_experiment_execution.md` |
+| Experiment Code Verification (3-step, privacy-gated reviewer) | `prompts/05_experiment_execution.md` |
 | Subagent Safety (kill flag, PID, single-agent rule) | `prompts/05_experiment_execution.md` |
 | Experiment Result File Convention (`_meta`, `INDEX.md`) | `prompts/05_experiment_execution.md` |
 | Config Drift Check | `prompts/06_result_analysis.md` |
@@ -288,7 +290,7 @@ Detailed protocols live with the phase that owns them. Do not duplicate here —
 
 **Global rule (applies to all phases):** LLMs also hallucinate plausible-sounding factual claims. Every numerical value in a manuscript must trace to a specific experiment result file — never written from memory. Every citation must name a specific source — never vague attributions like "studies show...". See Phase 7 Step 2 for the full anti-hallucination protocol.
 
-**Global rule (applies to any phase that writes Python scripts producing manuscript values):** Every such script must pass the 3-step **Code Verification Protocol** before execution: (1) external-model logical review of data flow and methodology, (2) `code-quality-review` pass, (3) syntax check + execution. This covers experiment scripts (Phase 5), analysis/statistical-test/figure generation scripts (Phase 6), and any figure re-run scripts (Phase 7). Step 1 is **not optional** for figure or analysis scripts that compute values at runtime — the Round 5 silent-failure incident was exactly that scenario (train features matched against val images). Full protocol in `prompts/05_experiment_execution.md`.
+**Global rule (applies to any phase that writes Python scripts producing manuscript values):** Every such script must pass the 3-step **Code Verification Protocol** before execution: (1) independent logical review of data flow and methodology, (2) `code-quality-review` pass, (3) syntax check + execution. Step 1 defaults to a host-native adversarial reviewer; an external reviewer is allowed only under Phase 5's `external_code_review` and `api_key_env` gate. This covers experiment scripts (Phase 5), analysis/statistical-test/figure generation scripts (Phase 6), and any figure re-run scripts (Phase 7). Step 1 is **not optional** for figure or analysis scripts that compute values at runtime — the Round 5 silent-failure incident was exactly that scenario. Full protocol in `prompts/05_experiment_execution.md`.
 
 ## Error Recovery
 

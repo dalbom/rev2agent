@@ -520,5 +520,156 @@ class TestRoundIdentityOwnership(unittest.TestCase):
         self.assertEqual(state_line(phase3, "sub_step"), "- `sub_step`: `null`")
 
 
+class TestCredentialAndCodeEgressSafety(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.setup = read("prompts/00_setup.md")
+        cls.phase5 = read("prompts/05_experiment_execution.md")
+        cls.phase6 = read("prompts/06_result_analysis.md")
+
+    def test_v2_schema_stores_environment_references_not_secrets(self):
+        schema_section = between(
+            self.setup,
+            "## Config File Schema",
+            "## State Update",
+        )
+        match = re.search(r"```json\n(.*?)\n```", schema_section, re.DOTALL)
+        self.assertIsNotNone(match, "Phase 0 config schema JSON block is missing")
+        schema = json.loads(match.group(1))
+        self.assertEqual(schema["version"], 2)
+        self.assertIs(schema["external_code_review"], False)
+        self.assertEqual(schema["roles"]["verification"]["provider"], "host-native")
+        self.assertTrue(schema["providers"])
+        for provider in schema["providers"]:
+            with self.subTest(provider=provider.get("name")):
+                self.assertIn("api_key_env", provider)
+                self.assertNotIn("api_key", provider)
+
+    def test_setup_never_solicits_or_exposes_secret_values(self):
+        self.assertIn("Do not paste API keys", self.setup)
+        for obsolete in (
+            "just paste them below",
+            "You can paste multiple keys at once",
+            "When the user pastes a key",
+            "Store the key in",
+            "Keys are stored directly in this file",
+            "no need for environment variables",
+            '"api_key":',
+        ):
+            with self.subTest(obsolete=obsolete):
+                self.assertNotIn(obsolete, self.setup)
+        for required in ("Never print", "command arguments", "URLs", "logs"):
+            self.assertIn(required, self.setup)
+
+    def test_setup_defines_standard_environment_references(self):
+        for env_name in (
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "XAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "DEEPSEEK_API_KEY",
+        ):
+            self.assertIn(env_name, self.setup)
+        self.assertIn("[A-Za-z_][A-Za-z0-9_]*", self.setup)
+        self.assertIn("presence only", self.setup)
+
+    def test_config_write_is_atomic_and_private_before_content_is_written(self):
+        self.assertIn("`0600`", self.setup)
+        self.assertRegex(
+            self.setup,
+            re.compile(r"create.*0600.*before.*writ", re.IGNORECASE | re.DOTALL),
+        )
+        self.assertRegex(self.setup, re.compile(r"atomic", re.IGNORECASE))
+        self.assertRegex(self.setup, r"verify the final\s+permissions")
+
+    def test_legacy_plaintext_config_migration_never_uses_old_value(self):
+        migration = between(
+            self.setup,
+            "## Legacy Configuration Migration",
+            "## Config File Schema",
+        )
+        self.assertIn("legacy `api_key`", migration)
+        self.assertRegex(
+            migration,
+            re.compile(
+                r"Never.*display.*print.*use.*transmit.*test.*copy",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+        self.assertIn("api_key_env", migration)
+        self.assertIn("outside chat", migration)
+        self.assertIn("external_code_review", migration)
+        self.assertIn("false", migration)
+        self.assertIn("do not silently delete", migration.lower())
+        self.assertIn("rotate", migration.lower())
+
+    def test_both_entrypoints_route_legacy_config_before_project_startup(self):
+        for entrypoint in ("AGENTS.md", "CLAUDE.md"):
+            with self.subTest(entrypoint=entrypoint):
+                text = read(entrypoint)
+                startup = between(text, "## Startup Protocol", "## Phase Overview")
+                self.assertIn("version", startup)
+                self.assertIn("legacy `api_key`", startup)
+                self.assertIn("before", startup)
+                self.assertIn("api_key_env", text)
+                self.assertIn("external_code_review", text)
+                self.assertNotIn("| 0 | Setup | Direct | API keys |", text)
+
+    def test_phase5_external_code_review_requires_exact_opt_in_and_env(self):
+        step1 = between(
+            self.phase5,
+            "### Step 1: Logical Flow Verification",
+            "### Step 2:",
+        )
+        self.assertIn("external_code_review", step1)
+        self.assertIn("api_key_env", step1)
+        self.assertRegex(
+            step1,
+            re.compile(r"JSON boolean.*exactly.*true", re.IGNORECASE | re.DOTALL),
+        )
+        self.assertRegex(
+            step1,
+            re.compile(
+                r"missing.*false.*invalid.*host-native",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+        self.assertIn("Do not send the script", step1)
+        self.assertIn("host-native adversarial reviewer", step1)
+        self.assertNotIn(
+            "Before running any experiment script, query an external model",
+            step1,
+        )
+
+    def test_phase6_inherits_privacy_gate_without_external_default(self):
+        verification = between(
+            self.phase6,
+            "### 6.6 Code Verification",
+            "### 6.7",
+        )
+        self.assertIn("external_code_review", verification)
+        self.assertIn("host-native", verification)
+        self.assertNotIn("External-model logical review", verification)
+
+    def test_user_docs_describe_env_setup_and_default_off_code_egress(self):
+        english = read("README.md") + read("INSTALL.md")
+        korean = read("README_ko.md") + read("INSTALL.md")
+        self.assertIn("environment variable", english)
+        self.assertIn("disabled by default", english)
+        self.assertIn("환경 변수", korean)
+        self.assertIn("기본적으로 비활성화", korean)
+        self.assertNotIn("Paste your keys", english)
+        self.assertNotIn("키를 붙여넣으면", korean)
+        self.assertNotIn("in plaintext", english)
+        self.assertNotIn("평문", korean)
+
+    def test_gitignore_describes_local_config_without_plaintext_claim(self):
+        gitignore = read(".gitignore")
+        self.assertIn(".rev2agent_config.json", gitignore)
+        self.assertNotIn("plaintext API keys", gitignore)
+
+
 if __name__ == "__main__":
     unittest.main()

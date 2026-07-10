@@ -54,7 +54,7 @@ rev2agent 디렉토리를 Codex에서 열고 `AGENTS.md` 시작 프로토콜을 
 
 첫 실행 시 Rev2Agent가 다음을 안내합니다:
 
-1. **외부 LLM API 키 설정** (선택) -- 멀티 모델 토론과 코드 교차 검증에 사용. OpenRouter, OpenAI, Google AI Studio, xAI, Anthropic, OpenAI-compatible 엔드포인트를 지원합니다. 없어도 동작합니다.
+1. **외부 LLM 연결** (선택) -- 멀티 모델 토론에 사용합니다. 자격 증명은 채팅이나 설정 파일이 아니라 환경 변수로 설정하며, Phase 0에는 프로바이더 이름만 전달합니다. OpenRouter, OpenAI, Google AI Studio, xAI, Anthropic, OpenAI-compatible 엔드포인트를 지원합니다. 없어도 동작합니다. 외부 코드 검토는 기본적으로 비활성화되며 별도의 명시적 동의가 필요합니다.
 2. **LaTeX 컴파일러 확인** (선택) -- 논문 PDF 생성용. 없으면 나중에 설치해도 됩니다:
 
    ```bash
@@ -67,7 +67,7 @@ rev2agent 디렉토리를 Codex에서 열고 `AGENTS.md` 시작 프로토콜을 
 
 ### 생성되는 파일
 
-- `.rev2agent_config.json` -- 저장소 루트에 생성되며 API 키를 **평문으로** 저장합니다. git에서 무시되도록 설정되어 있습니다. 절대 커밋하지 마세요.
+- `.rev2agent_config.json` -- 저장소 루트에 생성되는 로컬 설정입니다. 비밀 값 대신 환경 변수 이름만 저장하고 파일 권한을 가능한 경우 `0600`으로 설정합니다. git에서 무시되며 커밋하지 않습니다.
 - 연구 프로젝트는 저장소 루트의 하위 폴더로 생성되며 기본적으로 git에서 무시됩니다. 연구 데이터가 public 저장소에 올라가지 않습니다.
 
 </details>
@@ -121,7 +121,7 @@ Open the rev2agent directory in Codex and follow the `AGENTS.md` startup protoco
 
 On first run, Rev2Agent walks you through:
 
-1. **External LLM API keys** (optional) -- used for multi-model discussions and code cross-verification. Supports OpenRouter, OpenAI, Google AI Studio, xAI, Anthropic, and OpenAI-compatible endpoints. Works without them.
+1. **External LLM access** (optional) -- used for multi-model discussions. Set each credential in an environment variable outside chat; Phase 0 receives only provider names. OpenRouter, OpenAI, Google AI Studio, xAI, Anthropic, and OpenAI-compatible endpoints are supported. External code review is disabled by default and requires a separate explicit opt-in.
 2. **LaTeX compiler check** (optional) -- for manuscript PDF generation. Can be installed later:
 
    ```bash
@@ -134,5 +134,5 @@ Once setup is complete, start talking about your research.
 
 ## What Gets Created
 
-- `.rev2agent_config.json` -- created at the repository root, stores your API keys **in plaintext**, and is git-ignored. Never commit it.
+- `.rev2agent_config.json` -- machine-local configuration created at the repository root. It stores environment variable names rather than secret values, uses mode `0600` where supported, and is git-ignored. Never commit it.
 - Research projects are created as subfolders of the repository root and are git-ignored by default, so your research data stays out of the public repo.

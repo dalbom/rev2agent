@@ -31,14 +31,24 @@ Verification applies to ALL scripts that produce or compute values used in the m
 
 Scripts that ONLY read pre-computed results from JSON/CSV and render them (pure plotting) are exempt from Step 1 but still require Step 2.
 
-### Step 1: Logical Flow Verification (External Model)
+### Step 1: Logical Flow Verification
 
-Before running any experiment script, query an external model (configured in `.rev2agent_config.json`) to verify that the code correctly implements the intended experimental protocol. This catches methodology bugs that code review cannot — bugs where the code runs perfectly but tests the wrong thing. If no external model is configured, use a separate host-native reviewer with an explicit "adversarial reviewer" role.
+Before running any experiment script, use an independent adversarial reviewer to verify that the code implements the intended experimental protocol. This catches methodology bugs that ordinary code review cannot — bugs where the code runs perfectly but tests the wrong thing.
+
+The mandatory default is a **host-native adversarial reviewer**. Sending unpublished code to an external provider is permitted only when both conditions hold:
+
+1. `.rev2agent_config.json` contains `external_code_review` as the JSON boolean exactly `true`; and
+2. the selected provider's `api_key_env` names an environment variable that is currently present.
+
+Missing, `false`, string `"true"`, null, numeric, or otherwise invalid `external_code_review` values all mean `false`. A missing environment reference also forces the host-native path. In every fallback case, **Do not send the script, excerpts, diffs, data samples, or prompts containing the code to an external model.** Provider configuration for `major revision` discussions is not code-upload consent.
+
+When the exact opt-in and environment-reference checks both pass, report the external provider/model and send only the material needed for this review. Resolve the credential inside the provider-calling process; never print it or put it in a URL, log, or command argument.
 
 **Show which model is performing the review:**
 ```
 Code Verification — [script_name.py]
-Reviewer: gpt-5.4 via OpenRouter  (or "host-native adversarial reviewer" if no external model)
+Reviewer: host-native adversarial reviewer
+# Or, only after both privacy checks: [configured external model] via [provider]
 ```
 
 **Prompt template:**
@@ -56,7 +66,8 @@ CRITICAL DATA FLOW TO VERIFY:
 5. Is there any train/test leakage?
 
 CODE:
-[Paste the full script]
+[Provide the script to the selected reviewer. Keep it on-host unless the two
+external-code-review checks above both pass.]
 
 Check ONLY for logical errors in the experimental design.
 Ignore code quality, style, and efficiency.
@@ -395,7 +406,7 @@ Set up experiment monitoring:
 
 Once all subagents have finished:
 
-1. **Apply the Code Verification Protocol** (defined at the top of this file) to every newly written script: train.py, evaluate.py, status.py, baseline runners, and any model/utility modules. Steps 1-2 of the protocol (external-model logical review + Simplify) are mandatory before any script runs.
+1. **Apply the Code Verification Protocol** (defined at the top of this file) to every newly written script: train.py, evaluate.py, status.py, baseline runners, and any model/utility modules. Steps 1-2 of the protocol (independent logical review + code-quality review) are mandatory before any script runs. Step 1 uses a host-native adversarial reviewer unless the explicit external-code-review privacy gate passes.
 2. **Dry run** the training script for 1 iteration to catch import/shape errors that static review cannot.
 3. **Present** the complete setup to the user:
 

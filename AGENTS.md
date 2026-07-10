@@ -59,7 +59,7 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
 **Every time this session starts, do the following FIRST:**
 
-0. **Check setup**: If `.rev2agent_config.json` does not exist at the repository root, run Phase 0 by reading `prompts/00_setup.md`. This only happens once; subsequent sessions skip this step.
+0. **Check setup and security schema**: Before project discovery, read only the structure of `.rev2agent_config.json`. Run Phase 0 from `prompts/00_setup.md` if the file is missing, its `version` is not `2`, it contains a legacy `api_key` value field, or required version-2 privacy fields are invalid. Never use a legacy value. Normal startup continues only after the config is safely migrated.
 1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`. If `_new_project_draft/` exists, an interview was interrupted — offer to resume it or discard the draft (see `prompts/01_interview.md`).
 2. **If no projects exist**: Begin at Phase 1 (Topic Interview).
 3. **If projects exist**: List them with a brief status summary and ask the user whether to resume one or start a new project.
@@ -78,7 +78,7 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
 | Phase | Name | Codex Handling Mode | User Input | Prompt File |
 |-------|------|---------------------|-----------|-------------|
-| 0 | Setup | Direct | API keys | `prompts/00_setup.md` |
+| 0 | Setup | Direct | Provider names (optional) | `prompts/00_setup.md` |
 | 1 | Topic Interview | Direct | Conversational | `prompts/01_interview.md` |
 | 2 | Literature Search | Parallel subagents if available; otherwise direct synthesis | Confirm topic | `prompts/02_literature_search.md` |
 | 3 | Research Plan | Direct | Confirm plan | `prompts/03_research_plan.md` |
@@ -234,12 +234,11 @@ Where shared prompts refer to starting a new session, interpret that as:
 
 ### External Models
 
-External LLM providers and models are configured during Phase 0 and stored in `.rev2agent_config.json`. Rev2Agent may use any configured external models for:
+External LLM providers and models are configured during Phase 0. `.rev2agent_config.json` stores only each provider's `api_key_env` environment-variable name, never its credential value. External discussion models may be used, with the Phase 0 disclosure, for:
 - `major revision` discussions
-- independent experiment-code verification
 - stuck or ambiguous research decisions
 
-Routine file editing, script execution, and status work do not require external models.
+Experiment-code verification is separate. Full code may leave the host only when `external_code_review` is the JSON boolean exactly `true` and the selected provider's `api_key_env` is present. A missing, false, or invalid setting means false and requires a host-native adversarial reviewer. Never send code externally in that fallback. Routine file editing, script execution, and status work do not require external models.
 
 Do not assume Anthropic is redundant in all hosts. Follow the setup logic in `prompts/00_setup.md`, but interpret provider redundancy in the context of the current host environment.
 
@@ -252,7 +251,7 @@ The goal is to launch a structured multi-perspective review of the current resea
 Preferred Codex behavior:
 1. Show the panel composition before starting.
 2. Use multiple independent Codex review perspectives or subagents if the host supports them cleanly (count from the `host_agents` setting configured in Phase 0, default: 3; legacy configs may use the key `claude_agents`).
-3. Query any configured external models from `.rev2agent_config.json` when available and useful.
+3. Query configured external discussion models only when their `api_key_env` references are present and the Phase 0 research-content disclosure applies. This does not grant permission to send source code.
 4. Synthesize findings and present a single integrated recommendation to the user.
 
 Fallback behavior:
