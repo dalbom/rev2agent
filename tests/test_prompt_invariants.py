@@ -407,19 +407,15 @@ class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
         self.assertNotIn("timestamp, config, round", meta)
         self.assertIn('"experiment_id": "E01"', phase5)
 
-    def test_phase5_and_plans_require_explicit_seed_metadata(self):
+    def test_phase5_requires_explicit_seed_metadata(self):
         phase5 = read("prompts/05_experiment_execution.md")
-        design = read("docs/plans/2026-07-10-core-gates-design.md")
-        plan = read("docs/plans/2026-07-10-core-gates.md")
         self.assertIn("`_meta.seed` is always required; never omit it", phase5)
         self.assertIn('"seed": "aggregate"', phase5)
         self.assertIn('"contributing_seeds": [42, 123, 456]', phase5)
-        for document in (design, plan):
-            with self.subTest(document=document[:40]):
-                self.assertIn("`_meta.seed` is always required", document)
-                self.assertIn('`seed: "aggregate"`', document)
-                self.assertIn("`resolved_config.contributing_seeds`", document)
-                self.assertNotIn("seed` is optional", document)
+
+    def test_local_improvement_plans_are_gitignored(self):
+        gitignore = read(".gitignore")
+        self.assertIn("/docs/plans/", gitignore.splitlines())
 
     def test_phase6_evidence_examples_include_seed_identity(self):
         phase6 = read("prompts/06_result_analysis.md")

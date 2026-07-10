@@ -11,6 +11,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Per-metric seed and source-file provenance in aggregated experiment results
 
 ### Changed
+- `docs/plans/` is now reserved for local agent-improvement notes and excluded from the repository
 - Experiment results now require canonical `sha256:<digest>` configuration fingerprints, complete `_meta` provenance, distinct seed identities, and at least two contributing seeds per aggregated metric
 - Phase 8 experiment requests now re-enter Phase 6 through an explicit persisted `review_reentry` state while preserving the completed round identity
 - External code review defaults to a host-native reviewer; configured external verification models are used only after explicit opt-in and environment-variable credential checks
