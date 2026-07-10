@@ -116,7 +116,7 @@ After the user approves each phase's results, write a self-contained markdown su
 
 - **Never silently skip errors.** Always log them and inform the user.
 - **Experiment failure recovery:**
-  1. Save the error log to the current round's immutable log directory: `{project_dir}/experiment/logs/round{current_round}_{current_round_short_name}/`.
+  1. Save every failed attempt to its immutable per-run path: `{project_dir}/experiment/logs/{run_dir}/attempt_{attempt}_{timestamp}.log` (where `run_dir = {round_dir}/{exp_id}/seed{seed}`). Never overwrite a prior attempt log.
   2. Set the run's `experiment.active_runs[].status` to `"failed"`.
   3. Decision tree:
      - **Transient error** (OOM, timeout, network): retry up to 5x with the same config.

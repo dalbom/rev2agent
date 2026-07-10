@@ -106,9 +106,12 @@ A background Agent once zombified and repeatedly spawned rogue processes. Local 
 
 3. **Single-agent rule**: Only one experiment-running Agent at a time. Before spawning a new Agent, verify no existing experiment processes are alive via the PID files:
    ```bash
-   kill -0 $(cat {project_dir}/experiment/logs/{round_dir}/run_all.pid) 2>/dev/null && echo "orchestrator still running"
-   for PIDFILE in {project_dir}/experiment/logs/{round_dir}/*/seed*/current_pid; do
-       kill -0 $(cat "$PIDFILE") 2>/dev/null && echo "$PIDFILE: training script still running"
+   for PIDFILE in {project_dir}/experiment/logs/{round_dir}/run_all.pid {project_dir}/experiment/logs/{round_dir}/*/seed*/current_pid; do
+       if IFS= read -r PID < "$PIDFILE" \
+          && [[ "$PID" =~ ^[1-9][0-9]*$ ]] \
+          && kill -0 "$PID" 2>/dev/null; then
+           echo "$PIDFILE: process still running (PID $PID)"
+       fi
    done
    ```
    If either check reports a live process, do NOT spawn a new experiment agent.
@@ -120,6 +123,7 @@ Every experiment script must include a `_meta` field in its output JSON:
 ```json
 {
   "_meta": {
+    "experiment_id": "E01",
     "script": "scripts/run_gradient_inversion.py",
     "log_file": "experiment/logs/round12_gradient_inversion/E01/seed42/attempt_1_20260405T143000Z.log",
     "timestamp": "2026-04-05T14:30:00",
@@ -408,8 +412,9 @@ Estimated total time: [X] hours on [GPU name]
      $ tail -f {project_dir}/experiment/logs/{round_dir}/run_all_{timestamp}.log  # watch this launch's immutable log
      $ python {project_dir}/experiment/scripts/status.py    # check status
      $ bash {project_dir}/experiment/scripts/start_tensorboard.sh  # visualize
-     $ kill $(cat {project_dir}/experiment/logs/{round_dir}/run_all.pid)  # stop orchestrator
-     $ kill $(cat {project_dir}/experiment/logs/{run_dir}/current_pid)  # stop the identified experiment/seed run
+     $ stop_pid() { PIDFILE=$1; if IFS= read -r PID < "$PIDFILE" && [[ "$PID" =~ ^[1-9][0-9]*$ ]]; then kill "$PID"; else echo "Invalid PID file: $PIDFILE"; fi; }
+     $ stop_pid {project_dir}/experiment/logs/{round_dir}/run_all.pid  # stop orchestrator
+     $ stop_pid {project_dir}/experiment/logs/{run_dir}/current_pid   # stop the identified experiment/seed run
    ```
 
 ## State Update
@@ -447,8 +452,9 @@ When the user returns and this phase is active:
    - `experiment/logs/{run_dir}/current_pid` — individual Python script for one experiment ID and seed
    ```bash
    for PIDFILE in {project_dir}/experiment/logs/{round_dir}/run_all.pid {project_dir}/experiment/logs/{round_dir}/*/seed*/current_pid; do
-       PID=$(cat "$PIDFILE" 2>/dev/null)
-       if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+       if IFS= read -r PID < "$PIDFILE" \
+          && [[ "$PID" =~ ^[1-9][0-9]*$ ]] \
+          && kill -0 "$PID" 2>/dev/null; then
            echo "$PIDFILE: still running (PID $PID)"
        fi
    done

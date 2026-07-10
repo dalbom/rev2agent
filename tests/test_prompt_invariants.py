@@ -192,6 +192,7 @@ class TestRoundScopedResultConsumers(unittest.TestCase):
         self.assertIn(result_json, phase6)
         self.assertIn(result_md, phase6)
         self.assertGreaterEqual(phase7.count(result_json), 2)
+        self.assertGreaterEqual(phase7.count(result_md), 1)
         self.assertIn(
             "round_dir = round{current_round}_{current_round_short_name}", phase7
         )
@@ -200,6 +201,9 @@ class TestRoundScopedResultConsumers(unittest.TestCase):
         phase7 = read("prompts/07_manuscript_writing.md")
         self.assertNotIn(
             "{project_dir}/experiment/results/comparison_table.json", phase7
+        )
+        self.assertNotIn(
+            "{project_dir}/experiment/results/comparison_table.md", phase7
         )
 
 
@@ -217,14 +221,119 @@ class TestReviewReentry(unittest.TestCase):
 
     def test_phase6_dispatches_and_clears_review_reentry(self):
         phase6 = read("prompts/06_result_analysis.md")
-        self.assertIn('sub_step == "review_reentry"', phase6)
-        self.assertRegex(
-            phase6,
-            re.compile(
-                r"review_reentry.*(clear|change).*sub_step.*leav",
-                re.IGNORECASE | re.DOTALL,
-            ),
+        entry = between(phase6, "## Entry Routing", "## Prerequisites")
+        self.assertIn(
+            'If `sub_step == "review_reentry"`, the persisted marker proves this is review-driven planning from Phase 8',
+            entry,
         )
+        self.assertIn(
+            "clear or change `sub_step` before leaving re-entry planning",
+            entry,
+        )
+
+    def test_review_reentry_guard_skips_closed_round_bookkeeping(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        guard = between(
+            phase6,
+            "### Review Re-entry Bookkeeping Guard (MANDATORY)",
+            "### 6.9 Read the Roadmap",
+        )
+        required_rules = (
+            "Do not move the prior round's Active direction to Completed again.",
+            "Do not append a Results Comparison row for the prior round.",
+            "Do not re-run abandonment or other normal-analysis closure bookkeeping for the prior round.",
+            "Do not write or modify the prior round's `phase6_results.md` or `round_summary.md`.",
+            "Preserve the prior round's existing summaries and `phase_history` entries.",
+            "May re-prioritize Pending directions and add new Pending directions from `review_synthesis.md`.",
+        )
+        for rule in required_rules:
+            with self.subTest(rule=rule):
+                self.assertIn(rule, guard)
+
+    def test_review_reentry_guards_roadmap_and_summary_sections(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        roadmap_update = between(
+            phase6,
+            "### 6.10 Update Roadmap",
+            "### 6.11 Present Round Options",
+        )
+        round_summary = between(
+            phase6,
+            "### 6.13 Write Round Summary",
+            "## Roadmap Initialization",
+        )
+        phase_summary = between(phase6, "## Phase Summary", "## State Update")
+        self.assertIn(
+            "Normal analysis only — skip in `review_reentry`", roadmap_update
+        )
+        self.assertIn(
+            "If `sub_step == \"review_reentry\"`, skip this entire section",
+            round_summary,
+        )
+        self.assertIn(
+            "If `sub_step == \"review_reentry\"`, do not write or modify either prior-round summary file",
+            phase_summary,
+        )
+
+    def test_review_reentry_state_routes_do_not_reclose_prior_round(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        state_update = between(phase6, "## State Update")
+        self.assertIn(
+            "For `review_reentry`, never move the prior round to Completed again",
+            state_update,
+        )
+        self.assertIn(
+            "never append another `round_closed` or `phase_completed` event for it",
+            state_update,
+        )
+
+
+class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
+    def test_failure_logs_use_seed_scoped_immutable_attempt_paths(self):
+        conventions = read("prompts/conventions.md")
+        recovery = between(conventions, "## Error Recovery", "## Per-Project Paths")
+        self.assertIn(
+            "{project_dir}/experiment/logs/{run_dir}/attempt_{attempt}_{timestamp}.log",
+            recovery,
+        )
+        self.assertNotIn(
+            "experiment/logs/round{current_round}_{current_round_short_name}/",
+            recovery,
+        )
+
+    def test_phase6_meta_contract_lists_canonical_exact_fields(self):
+        phase5 = read("prompts/05_experiment_execution.md")
+        phase6 = read("prompts/06_result_analysis.md")
+        meta = between(phase6, "**`_meta` requirement:**", "After generating")
+        canonical_fields = (
+            "`experiment_id`, `script`, `log_file`, `timestamp`, "
+            "`resolved_config`, `config_fingerprint`, `round`, and `seed`"
+        )
+        self.assertIn(canonical_fields, meta)
+        self.assertIn(
+            "`seed` may be omitted only for an already-aggregated analysis file",
+            meta,
+        )
+        self.assertNotIn("timestamp, config, round", meta)
+        self.assertIn('"experiment_id": "E01"', phase5)
+
+    def test_phase6_evidence_examples_include_seed_identity(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        evidence_paths = re.findall(r"`([^`]*eval_results\.json)`", phase6)
+        self.assertGreaterEqual(len(evidence_paths), 4)
+        for path in evidence_paths:
+            with self.subTest(path=path):
+                self.assertRegex(path, r"/seed(?:\{seed\}|\*)/")
+
+    def test_phase5_pid_examples_validate_and_quote_pids(self):
+        phase5 = read("prompts/05_experiment_execution.md")
+        self.assertNotIn("kill $(cat", phase5)
+        self.assertNotRegex(phase5, r"kill -0\s+\$\(cat")
+        self.assertNotIn("PID=$(cat", phase5)
+        self.assertIn('IFS= read -r PID < "$PIDFILE"', phase5)
+        self.assertIn('[[ "$PID" =~ ^[1-9][0-9]*$ ]]', phase5)
+        self.assertIn('kill -0 "$PID"', phase5)
+        self.assertIn('kill "$PID"', phase5)
 
 
 class TestTerminalProjectStartup(unittest.TestCase):
