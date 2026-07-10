@@ -107,6 +107,7 @@ A background Agent once zombified and repeatedly spawned rogue processes. Local 
 3. **Single-agent rule**: Only one experiment-running Agent at a time. Before spawning a new Agent, verify no existing experiment processes are alive via the PID files:
    ```bash
    for PIDFILE in {project_dir}/experiment/logs/{round_dir}/run_all.pid {project_dir}/experiment/logs/{round_dir}/*/seed*/current_pid; do
+       [ -r "$PIDFILE" ] || continue
        if IFS= read -r PID < "$PIDFILE" \
           && [[ "$PID" =~ ^[1-9][0-9]*$ ]] \
           && kill -0 "$PID" 2>/dev/null; then
@@ -137,6 +138,19 @@ Every experiment script must include a `_meta` field in its output JSON:
 ```
 
 This enables tracing from any result file back to its generating script, log, and configuration without manual grep.
+
+`_meta.seed` is always required; never omit it or set it to `null`:
+
+- **Per-run result:** use a nonnegative integer seed, including `0` when applicable.
+- **Already-aggregated analysis result:** use `"seed": "aggregate"` and include a nonempty list of nonnegative integer seeds as `resolved_config.contributing_seeds`:
+  ```json
+  {
+    "seed": "aggregate",
+    "resolved_config": {"contributing_seeds": [42, 123, 456]}
+  }
+  ```
+
+No other seed representation is valid.
 
 Additionally, maintain `{project_dir}/experiment/results/{round_dir}/INDEX.md` — a table mapping each result file to its round, script, key metric, and date:
 
@@ -412,7 +426,7 @@ Estimated total time: [X] hours on [GPU name]
      $ tail -f {project_dir}/experiment/logs/{round_dir}/run_all_{timestamp}.log  # watch this launch's immutable log
      $ python {project_dir}/experiment/scripts/status.py    # check status
      $ bash {project_dir}/experiment/scripts/start_tensorboard.sh  # visualize
-     $ stop_pid() { PIDFILE=$1; if IFS= read -r PID < "$PIDFILE" && [[ "$PID" =~ ^[1-9][0-9]*$ ]]; then kill "$PID"; else echo "Invalid PID file: $PIDFILE"; fi; }
+     $ stop_pid() { PIDFILE=$1; if [ -r "$PIDFILE" ] && IFS= read -r PID < "$PIDFILE" && [[ "$PID" =~ ^[1-9][0-9]*$ ]]; then kill "$PID"; else echo "Invalid PID file: $PIDFILE"; fi; }
      $ stop_pid {project_dir}/experiment/logs/{round_dir}/run_all.pid  # stop orchestrator
      $ stop_pid {project_dir}/experiment/logs/{run_dir}/current_pid   # stop the identified experiment/seed run
    ```
@@ -452,6 +466,7 @@ When the user returns and this phase is active:
    - `experiment/logs/{run_dir}/current_pid` — individual Python script for one experiment ID and seed
    ```bash
    for PIDFILE in {project_dir}/experiment/logs/{round_dir}/run_all.pid {project_dir}/experiment/logs/{round_dir}/*/seed*/current_pid; do
+       [ -r "$PIDFILE" ] || continue
        if IFS= read -r PID < "$PIDFILE" \
           && [[ "$PID" =~ ^[1-9][0-9]*$ ]] \
           && kill -0 "$PID" 2>/dev/null; then

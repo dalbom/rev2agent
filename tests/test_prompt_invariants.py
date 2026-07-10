@@ -287,6 +287,67 @@ class TestReviewReentry(unittest.TestCase):
             state_update,
         )
 
+    def test_review_reentry_round_activation_is_route_specific(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        choice = between(
+            phase6,
+            "### 6.12 Update Roadmap After User's Choice",
+            '### When to set `sub_step: "refinement"`',
+        )
+        self.assertIn(
+            "Reserve and activate `current_round + 1` only for a Phase 4 or direct Phase 5 route.",
+            choice,
+        )
+        self.assertIn(
+            "A Phase 7 route creates no new round and no Active next-round entry.",
+            choice,
+        )
+        self.assertIn(
+            "A Phase 3 route creates no Active experimental round during re-entry planning",
+            choice,
+        )
+        self.assertNotIn(
+            "treat the choice as the next round (`current_round + 1`)", choice
+        )
+
+    def test_review_reentry_state_routes_match_activation_ownership(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        phase4 = between(
+            phase6,
+            "**If proceeding to another round (Phase 4):**",
+            "**If proceeding directly to Phase 5",
+        )
+        phase5 = between(
+            phase6,
+            "**If proceeding directly to Phase 5",
+            "**If proceeding to manuscript (Phase 7):**",
+        )
+        phase7 = between(
+            phase6,
+            "**If proceeding to manuscript (Phase 7):**",
+            "**If returning to Phase 3 (fundamental rethink):**",
+        )
+        phase3 = between(
+            phase6,
+            "**If returning to Phase 3 (fundamental rethink):**",
+        )
+        self.assertIn(
+            "Reserve the incremented round and mark the chosen direction Active",
+            phase4,
+        )
+        self.assertIn(
+            "Reserve the incremented round and mark the chosen direction Active",
+            phase5,
+        )
+        self.assertIn(
+            "No new round is reserved and no Active next-round entry is created",
+            phase7,
+        )
+        self.assertIn(
+            "Do not reserve or activate a new experimental round during re-entry planning",
+            phase3,
+        )
+
 
 class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
     def test_failure_logs_use_seed_scoped_immutable_attempt_paths(self):
@@ -310,12 +371,32 @@ class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
             "`resolved_config`, `config_fingerprint`, `round`, and `seed`"
         )
         self.assertIn(canonical_fields, meta)
+        self.assertIn("`seed` is always required and must never be omitted", meta)
         self.assertIn(
-            "`seed` may be omitted only for an already-aggregated analysis file",
+            'Per-run files use a nonnegative integer; aggregated files use `seed: "aggregate"`',
             meta,
         )
+        self.assertIn(
+            "`resolved_config.contributing_seeds` must be a nonempty list of nonnegative integers",
+            meta,
+        )
+        self.assertNotIn("may be omitted", meta)
         self.assertNotIn("timestamp, config, round", meta)
         self.assertIn('"experiment_id": "E01"', phase5)
+
+    def test_phase5_and_plans_require_explicit_seed_metadata(self):
+        phase5 = read("prompts/05_experiment_execution.md")
+        design = read("docs/plans/2026-07-10-core-gates-design.md")
+        plan = read("docs/plans/2026-07-10-core-gates.md")
+        self.assertIn("`_meta.seed` is always required; never omit it", phase5)
+        self.assertIn('"seed": "aggregate"', phase5)
+        self.assertIn('"contributing_seeds": [42, 123, 456]', phase5)
+        for document in (design, plan):
+            with self.subTest(document=document[:40]):
+                self.assertIn("`_meta.seed` is always required", document)
+                self.assertIn('`seed: "aggregate"`', document)
+                self.assertIn("`resolved_config.contributing_seeds`", document)
+                self.assertNotIn("seed` is optional", document)
 
     def test_phase6_evidence_examples_include_seed_identity(self):
         phase6 = read("prompts/06_result_analysis.md")
@@ -334,6 +415,11 @@ class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
         self.assertIn('[[ "$PID" =~ ^[1-9][0-9]*$ ]]', phase5)
         self.assertIn('kill -0 "$PID"', phase5)
         self.assertIn('kill "$PID"', phase5)
+        self.assertGreaterEqual(
+            phase5.count('[ -r "$PIDFILE" ] || continue'),
+            2,
+            "both PID glob loops must skip unreadable or unmatched paths quietly",
+        )
 
 
 class TestTerminalProjectStartup(unittest.TestCase):

@@ -83,6 +83,8 @@ git commit -m "fix: persist round workflow identity"
 
 **Step 1: Write failing regression tests**
 
+`_meta.seed` is always required. A per-run record uses a nonnegative integer. An already-aggregated record uses `seed: "aggregate"` and provides a nonempty list of nonnegative integers in `resolved_config.contributing_seeds`; a missing or `null` seed is invalid.
+
 Add tests for:
 
 ```python
@@ -93,7 +95,7 @@ def complete_meta(experiment_id, seed, fingerprint="cfg-v1"):
         "script": "scripts/eval.py",
         "log_file": "logs/eval.log",
         "timestamp": "2026-07-10T00:00:00Z",
-        "config": {"model": experiment_id},
+        "resolved_config": {"model": experiment_id},
         "round": 1,
         "seed": seed,
     }
@@ -102,6 +104,7 @@ def complete_meta(experiment_id, seed, fingerprint="cfg-v1"):
 - E01 and E02 with two seeds each produce two aggregates.
 - Duplicate `(round, experiment_id, config_fingerprint, method, group, seed)` records produce a warning and no aggregate for that identity.
 - Empty JSON, non-object JSON, `NaN`, invalid round values, incomplete `_meta`, and no-metric objects all produce warnings and no entries.
+- Missing or `null` seeds are rejected; aggregate inputs are accepted only with `seed: "aggregate"` and valid `resolved_config.contributing_seeds`.
 - Mixed valid and invalid rounds never crash Markdown formatting.
 
 **Step 2: Verify RED**
@@ -115,6 +118,7 @@ Expected: FAIL on cross-experiment aggregation and silent malformed inputs.
 - Scan every `*.json` candidate except the collector's own outputs and report non-files/empty files.
 - Parse JSON with a `parse_constant` callback that rejects non-RFC values.
 - Validate the required `_meta` fields and types; skip invalid files after recording warnings.
+- Require `_meta.seed` on every file: a nonnegative integer for per-run input, or `"aggregate"` with nonempty integer `resolved_config.contributing_seeds` for aggregate input.
 - Require at least one finite metric.
 - Carry `experiment_id` and `config_fingerprint` into entries and aggregate keys.
 - Detect duplicate seeded identities and suppress their aggregate while preserving provenance warnings.

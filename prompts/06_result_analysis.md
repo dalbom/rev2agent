@@ -95,7 +95,7 @@ For each pair of methods being compared:
 5. Save results to {project_dir}/experiment/results/{round_dir}/statistical_tests.json
 ```
 
-**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/{round_dir}/` — must include the canonical fields `experiment_id`, `script`, `log_file`, `timestamp`, `resolved_config`, `config_fingerprint`, `round`, and `seed`. `seed` may be omitted only for an already-aggregated analysis file; in that case, `resolved_config` must record the complete contributing seed set. Without this metadata, the current round's `collect_results.py --fail-on-warnings` gate fails on these files. The Result File Convention in `prompts/05_experiment_execution.md` remains authoritative.
+**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/{round_dir}/` — must include the canonical fields `experiment_id`, `script`, `log_file`, `timestamp`, `resolved_config`, `config_fingerprint`, `round`, and `seed`. `seed` is always required and must never be omitted. Per-run files use a nonnegative integer; aggregated files use `seed: "aggregate"`, and `resolved_config.contributing_seeds` must be a nonempty list of nonnegative integers. Without this metadata, the current round's `collect_results.py --fail-on-warnings` gate fails on these files. The Result File Convention in `prompts/05_experiment_execution.md` remains authoritative.
 
 After generating statistical test results, update `{project_dir}/experiment/results/{round_dir}/INDEX.md` with any new result files created during analysis.
 
@@ -264,15 +264,19 @@ Recommendation: Option [X] because [reason].
 
 Once the user picks a direction:
 
-In `review_reentry`, treat the choice as the next round (`current_round + 1`) and leave every prior-round roadmap entry unchanged except allowed Pending-priority edits above.
+Activation is route-specific, including in `review_reentry`:
 
-1. **Mark the chosen direction as Active** with the round number (e.g., `[R5]`).
+- Reserve and activate `current_round + 1` only for a Phase 4 or direct Phase 5 route.
+- A Phase 7 route creates no new round and no Active next-round entry.
+- A Phase 3 route creates no Active experimental round during re-entry planning; Phase 3 owns the next increment and empty short name after the new plan is confirmed, with later phases owning activation.
+
+1. **For Phase 4 or direct Phase 5 only, mark the chosen direction Active** with the reserved next-round number (e.g., `[R5]`).
 2. **Keep all non-chosen directions in Pending** at their current priority level.
 3. **If a new direction was proposed in the options but not chosen**, add it to the appropriate Pending tier.
 4. **Normal analysis only — skip in `review_reentry`: Mid-round abandonment (special case).** If the user explicitly abandons the currently Active direction (e.g., a pivot mid-round) instead of completing it, move it directly from Active to Abandoned with a reason from the enum. It does NOT need to pass through Completed first.
 5. **Config drift check** (this prompt owns the protocol): If the chosen direction changes the project's default experimental configuration (e.g., architecture, output dimensions, number of layers, preprocessing), scan all Python scripts under `{project_dir}/` for hardcoded references to the old config (grep for the old values: dimensions, layer counts, model names, paths). Flag any scripts that need updating — especially figure/visualization generation scripts, which are often written once and not revisited when the default config evolves. List the flagged scripts to the user, update them before the next round runs, and note the config change in `{project_dir}/manuscript/data_provenance.md` if a manuscript exists (runtime-computed figure values are the highest-risk entries for drift).
 6. **Write the updated roadmap to disk.**
-7. **Proceed to Phase 4 (Experiment Design) or Phase 5 (Experiment Execution)** as appropriate for the chosen direction.
+7. **Proceed through the selected State Update route** below; do not create round state or roadmap activation that belongs to a different route.
 
 ### When to set `sub_step: "refinement"`
 
@@ -453,7 +457,7 @@ For `review_reentry`, never move the prior round to Completed again. Preserve it
 - `project_status`: unchanged
 - `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
 - Normal analysis only: populate `results.raw_results_path`, `results.analysis_summary`, and set `results.user_confirmed` to `true`; preserve them in `review_reentry`
-- **Update roadmap:** Normal analysis moves the just-completed round to Completed; `review_reentry` leaves the prior round unchanged. Mark the chosen direction Active for the newly incremented round.
+- **Update roadmap:** Normal analysis moves the just-completed round to Completed; `review_reentry` leaves the prior round unchanged. Reserve the incremented round and mark the chosen direction Active; Phase 4 will persist its short name.
 - Append the Phase 6 completion event in normal analysis; for `review_reentry`, append only a `note` describing the planning route.
 
 **If proceeding directly to Phase 5 (identical config — additional seeds/repetitions only, no design changes):**
@@ -466,7 +470,7 @@ For `review_reentry`, never move the prior round to Completed again. Preserve it
 - `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
 - Normal analysis only: populate `results.raw_results_path`, `results.analysis_summary`, and set `results.user_confirmed` to `true`; preserve them in `review_reentry`
 - **Assign the round's `short_name`** during round planning (Phase 4 will not run for this round — see `prompts/conventions.md` "Round Numbering")
-- **Update roadmap:** Normal analysis moves the just-completed round to Completed; `review_reentry` leaves the prior round unchanged. Mark the chosen direction Active for the newly incremented round.
+- **Update roadmap:** Normal analysis moves the just-completed round to Completed; `review_reentry` leaves the prior round unchanged. Reserve the incremented round and mark the chosen direction Active using the short name confirmed here.
 - Append a `phase4_skipped` event to `phase_history` (entry format in `prompts/conventions.md`)
 
 **If proceeding to manuscript (Phase 7):**
@@ -479,6 +483,7 @@ For `review_reentry`, never move the prior round to Completed again. Preserve it
 - `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
 - Normal analysis only: populate `results.raw_results_path`, `results.analysis_summary`, and set `results.user_confirmed` to `true`; preserve them in `review_reentry`
 - **Update roadmap:** Normal analysis moves the current round to Completed; `review_reentry` makes no closure change.
+- No new round is reserved and no Active next-round entry is created; `current_round` and its short name remain unchanged.
 - Append the Phase 6 completion event in normal analysis; for `review_reentry`, append only a `note` describing the return to manuscript work.
 
 **If returning to Phase 3 (fundamental rethink):**
@@ -489,5 +494,6 @@ For `review_reentry`, never move the prior round to Completed again. Preserve it
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - `experiment.status`: `"completed"` after normal analysis; unchanged in `review_reentry`
+- Do not reserve or activate a new experimental round during re-entry planning. Phase 3 owns the increment and empty short name after the new plan is confirmed; activation follows that confirmed plan.
 - Keep all existing round folders and roadmap entries; add a plan-boundary marker (section break) to `research_roadmap.md`
 - Append a `new_research_plan` event to `phase_history` (entry format in `prompts/conventions.md`) with explanation of why rethink was needed
