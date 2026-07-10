@@ -670,12 +670,18 @@ def _clean_author_name(name: str) -> str:
 
 
 def _normalized_last_name(name: str) -> str:
-    """Extract a normalized family name from either BibTeX or API name order."""
+    """Extract the final family token from either BibTeX or API name order.
+
+    Comparing the final token is conservative but handles particles
+    symmetrically (``van Rossum, Guido`` and ``Guido van Rossum``).
+    """
     clean = _clean_author_name(name)
     if not clean:
         return ""
     if "," in clean:
-        return clean.split(",", 1)[0].strip()
+        family = clean.split(",", 1)[0].strip()
+        family_words = family.split()
+        return family_words[-1] if family_words else ""
     words = clean.split()
     return words[-1] if words else ""
 
@@ -883,6 +889,7 @@ def normalize_title_key(title: str) -> str:
 
 
 DOI_CACHE_PREFIX = "doi-v2:"
+EXTERNAL_CACHE_PREFIX = "title-v2:"
 
 
 # ---------------------------------------------------------------------------
@@ -1002,15 +1009,41 @@ class BibtexCitationVerifier:
         ]
 
     @staticmethod
-    def _has_usable_metadata_year(metadata: Dict) -> bool:
-        """Return whether source metadata supplies a plausible publication year."""
+    def _validated_metadata_year(metadata: Dict) -> Optional[int]:
+        """Return a plausible source year without coercing booleans or floats.
+
+        Accepted forms are non-boolean integers and digit-only strings in the
+        inclusive range 1000 through the current calendar year.
+        """
         year = metadata.get("year")
         if isinstance(year, bool):
-            return False
-        try:
-            return int(year) > 0
-        except (TypeError, ValueError):
-            return False
+            return None
+        if isinstance(year, int):
+            value = year
+        elif isinstance(year, str) and year.isdigit():
+            value = int(year)
+        else:
+            return None
+        return value if 1000 <= value <= CURRENT_YEAR else None
+
+    @classmethod
+    def _has_usable_metadata_year(cls, metadata: Dict) -> bool:
+        """Return whether source metadata supplies a validated publication year."""
+        return cls._validated_metadata_year(metadata) is not None
+
+    @staticmethod
+    def _usable_metadata_venue(metadata: Dict) -> str:
+        """Normalize an optional venue string; invalid shapes are inconclusive."""
+        venue = metadata.get("venue", "")
+        if isinstance(venue, str):
+            return venue.strip()
+        if (
+            isinstance(venue, (list, tuple))
+            and len(venue) == 1
+            and isinstance(venue[0], str)
+        ):
+            return venue[0].strip()
+        return ""
 
     @classmethod
     def _metadata_identity_gaps(cls, metadata: Dict) -> List[str]:
@@ -1024,6 +1057,28 @@ class BibtexCitationVerifier:
         if not cls._has_usable_metadata_year(metadata):
             gaps.append("year")
         return gaps
+
+    @classmethod
+    def _valid_doi_cache_record(cls, record: Any) -> bool:
+        """Validate a DOI cache record before indexing or trusting it."""
+        if not isinstance(record, dict):
+            return False
+        success = record.get("success")
+        metadata = record.get("metadata")
+        if not isinstance(success, bool) or not isinstance(metadata, dict):
+            return False
+        return not success or not cls._metadata_identity_gaps(metadata)
+
+    @classmethod
+    def _valid_external_cache_record(cls, record: Any) -> bool:
+        """Validate an external-search cache record before indexing it."""
+        if not isinstance(record, dict):
+            return False
+        found = record.get("found")
+        metadata = record.get("metadata")
+        if not isinstance(found, bool) or not isinstance(metadata, dict):
+            return False
+        return not found or not cls._metadata_identity_gaps(metadata)
 
     def _record_incomplete_metadata(
         self, source_label: str, gaps: List[str], result: Dict
@@ -1075,10 +1130,10 @@ class BibtexCitationVerifier:
                 self._out(f"    [!] {issue}")
 
         bib_year = fields.get("year", "")
-        metadata_year = metadata.get("year")
-        if bib_year and self._has_usable_metadata_year(metadata):
+        metadata_year = self._validated_metadata_year(metadata)
+        if bib_year and metadata_year is not None:
             try:
-                years_match = int(bib_year) == int(metadata_year)
+                years_match = int(bib_year) == metadata_year
             except (ValueError, TypeError):
                 years_match = True  # structural validation reports malformed years
             if not years_match:
@@ -1093,7 +1148,7 @@ class BibtexCitationVerifier:
         # Some APIs omit a container title. Absence is inconclusive; a
         # contradiction is suspicious only when both sides provide a venue.
         bib_venue = fields.get("booktitle", "") or fields.get("journal", "")
-        metadata_venue = metadata.get("venue", "")
+        metadata_venue = self._usable_metadata_venue(metadata)
         if bib_venue and metadata_venue:
             venue_sim = venue_similarity(bib_venue, metadata_venue)
             self._out(
@@ -1263,14 +1318,22 @@ class BibtexCitationVerifier:
                 # old Family Given order.
                 cache_key = f"{DOI_CACHE_PREFIX}{doi}"
                 cached = self.cache.get(cache_key) if self.cache else None
-                if cached is not None:
+                if self._valid_doi_cache_record(cached):
                     success, metadata = cached["success"], cached["metadata"]
                     self._out(f"    (from cache)")
                 else:
+                    if cached is not None:
+                        self._out("    (ignored invalid or incomplete cache record)")
                     success, metadata = verify_doi(doi)
                     time.sleep(0.5)  # rate limit
-                    # Cache definitive outcomes only (never transient failures)
-                    if self.cache and not metadata.get("network_error"):
+                    # Cache complete successes and definitive failures only.
+                    cacheable_success = (
+                        success and not self._metadata_identity_gaps(metadata)
+                    )
+                    cacheable_failure = (
+                        not success and not metadata.get("network_error")
+                    )
+                    if self.cache and (cacheable_success or cacheable_failure):
                         self.cache.set(cache_key,
                                        {"success": success, "metadata": metadata})
 
@@ -1309,17 +1372,23 @@ class BibtexCitationVerifier:
             doi_clean = result["doi_verified"] and not result["mismatch"]
             if title and not doi_clean:
                 self._out(f"    API   : Searching Crossref ...")
-                ext_cache_key = f"title:{normalize_title_key(title)}"
+                ext_cache_key = f"{EXTERNAL_CACHE_PREFIX}{normalize_title_key(title)}"
                 cached = self.cache.get(ext_cache_key) if self.cache else None
-                if cached is not None:
+                if self._valid_external_cache_record(cached):
                     found, ext_meta = cached["found"], cached["metadata"]
                     self._out(f"    (from cache)")
                 else:
+                    if cached is not None:
+                        self._out("    (ignored invalid or incomplete cache record)")
                     found, ext_meta = search_external(
                         title, enable_s2=self.enable_s2, s2_api_key=self.s2_api_key,
                         bib_author=fields.get("author", ""),
                     )
-                    if self.cache and found:
+                    if (
+                        self.cache
+                        and found
+                        and not self._metadata_identity_gaps(ext_meta)
+                    ):
                         self.cache.set(ext_cache_key,
                                        {"found": found, "metadata": ext_meta})
                 src = ext_meta.get("source", "?")

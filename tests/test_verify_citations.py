@@ -469,6 +469,31 @@ class TestS2Key(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestCache(unittest.TestCase):
+    COMPLETE_METADATA = {
+        "title": "Identity Matters",
+        "authors": ["John Smith"],
+        "year": 2024,
+        "venue": "Journal of Testing",
+    }
+
+    def _project(self, root, include_doi=True):
+        doi_line = "  doi = {10.1234/identity}\n" if include_doi else ""
+        bib = root / "refs.bib"
+        bib.write_text(
+            "@article{paper,\n"
+            "  title = {Identity Matters},\n"
+            "  author = {Smith, John},\n"
+            "  journal = {Journal of Testing},\n"
+            "  year = {2024},\n"
+            f"{doi_line}"
+            "}\n",
+            encoding="utf-8",
+        )
+        texdir = root / "tex"
+        texdir.mkdir()
+        (texdir / "main.tex").write_text(r"\cite{paper}", encoding="utf-8")
+        return bib, texdir
+
     def test_roundtrip(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "cache.json"
@@ -582,6 +607,169 @@ class TestCache(unittest.TestCase):
             external_lookup.assert_not_called()
             url_lookup.assert_not_called()
 
+    def test_malformed_or_incomplete_doi_cache_records_are_refetched(self):
+        invalid_records = {
+            "string": "garbage",
+            "missing_metadata": {"success": True},
+            "missing_success": {"metadata": self.COMPLETE_METADATA},
+            "nondict_metadata": {"success": True, "metadata": "garbage"},
+            "incomplete_metadata": {
+                "success": True,
+                "metadata": {
+                    "title": "Identity Matters",
+                    "authors": [],
+                    "year": None,
+                },
+            },
+        }
+        for case, record in invalid_records.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                bib, texdir = self._project(root)
+                cache_path = root / "cache.json"
+                cache_path.write_text(
+                    json.dumps({"doi-v2:10.1234/identity": record}),
+                    encoding="utf-8",
+                )
+                doi_lookup = mock.Mock(
+                    return_value=(True, dict(self.COMPLETE_METADATA))
+                )
+                external_lookup = mock.Mock()
+                verifier = vcb.BibtexCitationVerifier(
+                    bib_path=bib, tex_dir=texdir, strict=True,
+                    cache_path=cache_path,
+                )
+                with mock.patch.object(vcb, "verify_doi", doi_lookup), \
+                        mock.patch.object(vcb, "search_external", external_lookup), \
+                        mock.patch.object(vcb.time, "sleep"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    passed = verifier.run()
+                self.assertTrue(passed)
+                self.assertEqual(
+                    verifier.results["paper"]["status"],
+                    vcb.BibtexCitationVerifier.VERIFIED,
+                )
+                doi_lookup.assert_called_once_with("10.1234/identity")
+                external_lookup.assert_not_called()
+
+    def test_legacy_and_invalid_external_cache_records_are_refetched(self):
+        incomplete = {
+            "title": "Identity Matters",
+            "authors": [],
+            "year": None,
+            "source": "crossref",
+        }
+        cache_cases = {
+            "legacy_namespace": {
+                "title:identity matters": {
+                    "found": True,
+                    "metadata": incomplete,
+                }
+            },
+            "string": {"title-v2:identity matters": "garbage"},
+            "missing_metadata": {
+                "title-v2:identity matters": {"found": True}
+            },
+            "nondict_metadata": {
+                "title-v2:identity matters": {
+                    "found": True,
+                    "metadata": "garbage",
+                }
+            },
+            "incomplete_metadata": {
+                "title-v2:identity matters": {
+                    "found": True,
+                    "metadata": incomplete,
+                }
+            },
+        }
+        complete_external = dict(
+            self.COMPLETE_METADATA,
+            source="crossref",
+            title_similarity=1.0,
+        )
+        for case, cache_data in cache_cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                bib, texdir = self._project(root, include_doi=False)
+                cache_path = root / "cache.json"
+                cache_path.write_text(json.dumps(cache_data), encoding="utf-8")
+                external_lookup = mock.Mock(
+                    return_value=(True, dict(complete_external))
+                )
+                verifier = vcb.BibtexCitationVerifier(
+                    bib_path=bib, tex_dir=texdir, strict=True,
+                    cache_path=cache_path,
+                )
+                with mock.patch.object(vcb, "search_external", external_lookup), \
+                        mock.patch.object(vcb.time, "sleep"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    passed = verifier.run()
+                self.assertTrue(passed)
+                self.assertEqual(
+                    verifier.results["paper"]["status"],
+                    vcb.BibtexCitationVerifier.EXT_VERIFIED,
+                )
+                external_lookup.assert_called_once()
+
+    def test_incomplete_successful_identity_metadata_is_not_cached(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bib, texdir = self._project(root)
+            cache_path = root / "cache.json"
+            incomplete_doi = {
+                "title": "Identity Matters",
+                "authors": [],
+                "year": None,
+                "venue": "",
+            }
+            complete_external = dict(
+                self.COMPLETE_METADATA,
+                source="crossref",
+                title_similarity=1.0,
+            )
+            verifier = vcb.BibtexCitationVerifier(
+                bib_path=bib, tex_dir=texdir, strict=True,
+                cache_path=cache_path,
+            )
+            with mock.patch.object(
+                    vcb, "verify_doi", return_value=(True, incomplete_doi)), \
+                    mock.patch.object(
+                        vcb, "search_external",
+                        return_value=(True, complete_external)), \
+                    mock.patch.object(vcb.time, "sleep"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                passed = verifier.run()
+            self.assertTrue(passed)
+            saved = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertNotIn("doi-v2:10.1234/identity", saved)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bib, texdir = self._project(root, include_doi=False)
+            cache_path = root / "cache.json"
+            incomplete_external = {
+                "title": "Identity Matters",
+                "authors": [],
+                "year": None,
+                "source": "crossref",
+                "title_similarity": 1.0,
+            }
+            verifier = vcb.BibtexCitationVerifier(
+                bib_path=bib, tex_dir=texdir, strict=True,
+                cache_path=cache_path,
+            )
+            with mock.patch.object(
+                    vcb, "search_external",
+                    return_value=(True, incomplete_external)), \
+                    mock.patch.object(vcb.time, "sleep"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                passed = verifier.run()
+            self.assertFalse(passed)
+            saved = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertNotIn("title:identity matters", saved)
+            self.assertNotIn("title-v2:identity matters", saved)
+
 
 class TestAuthorNormalization(unittest.TestCase):
     def test_unicode_and_bibtex_order_are_normalized_symmetrically(self):
@@ -594,6 +782,13 @@ class TestAuthorNormalization(unittest.TestCase):
     def test_latex_and_unicode_accents_match_ascii_api_names(self):
         similarity, mismatches = vcb.author_similarity(
             r"Packh{\"a}user, Katharina", ["Katharina Packhauser"]
+        )
+        self.assertEqual(similarity, 1.0)
+        self.assertEqual(mismatches, [])
+
+    def test_particle_surname_orders_match_on_final_family_token(self):
+        similarity, mismatches = vcb.author_similarity(
+            "van Rossum, Guido", ["Guido van Rossum"]
         )
         self.assertEqual(similarity, 1.0)
         self.assertEqual(mismatches, [])
@@ -871,6 +1066,108 @@ class TestCitationIdentityRun(unittest.TestCase):
                     ),
                     result["issues"],
                 )
+
+    def test_optional_venue_values_are_sanitized_without_crashing(self):
+        venue_cases = {
+            "mapping": {"name": "Journal of Testing"},
+            "number": 42,
+            "multiple": ["Journal of Testing", "Other Venue"],
+            "single_string_list": ["Journal of Testing"],
+        }
+        for case, venue in venue_cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as td:
+                bib, texdir = self._paths(Path(td), self.COMPLETE_BIB)
+                doi_meta = {
+                    "title": "Identity Matters",
+                    "authors": ["John Smith"],
+                    "year": 2024,
+                    "venue": venue,
+                }
+                verifier = vcb.BibtexCitationVerifier(
+                    bib_path=bib, tex_dir=texdir, strict=True,
+                )
+                with mock.patch.object(
+                        vcb, "verify_doi", return_value=(True, doi_meta)), \
+                        mock.patch.object(vcb, "search_external") as external_lookup, \
+                        mock.patch.object(vcb.time, "sleep"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    passed = verifier.run()
+                self.assertTrue(passed)
+                self.assertEqual(
+                    verifier.results["paper"]["status"],
+                    vcb.BibtexCitationVerifier.VERIFIED,
+                )
+                external_lookup.assert_not_called()
+
+    def test_invalid_source_years_are_incomplete_not_mismatches(self):
+        invalid_years = (
+            True,
+            2024.0,
+            2024.9,
+            "2024.9",
+            "twenty twenty-four",
+            999,
+            vcb.CURRENT_YEAR + 1,
+        )
+        for year in invalid_years:
+            with self.subTest(year=year), tempfile.TemporaryDirectory() as td:
+                bib, texdir = self._paths(Path(td), self.COMPLETE_BIB)
+                doi_meta = {
+                    "title": "Identity Matters",
+                    "authors": ["John Smith"],
+                    "year": year,
+                    "venue": "Journal of Testing",
+                }
+                verifier = vcb.BibtexCitationVerifier(
+                    bib_path=bib, tex_dir=texdir, strict=True,
+                )
+                with mock.patch.object(
+                        vcb, "verify_doi", return_value=(True, doi_meta)), \
+                        mock.patch.object(
+                            vcb, "search_external",
+                            return_value=(False, {"error": "no match"})), \
+                        mock.patch.object(vcb.time, "sleep"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    passed = verifier.run()
+                result = verifier.results["paper"]
+                self.assertFalse(passed)
+                self.assertFalse(result["doi_verified"])
+                self.assertFalse(result["mismatch"])
+                self.assertEqual(
+                    result["status"], vcb.BibtexCitationVerifier.UNVERIFIED
+                )
+                self.assertTrue(
+                    any(
+                        "DOI metadata incomplete" in issue and "year" in issue
+                        for issue in result["issues"]
+                    ),
+                    result["issues"],
+                )
+
+    def test_digit_only_string_year_is_valid_identity_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            bib, texdir = self._paths(Path(td), self.COMPLETE_BIB)
+            doi_meta = {
+                "title": "Identity Matters",
+                "authors": ["John Smith"],
+                "year": "2024",
+                "venue": "Journal of Testing",
+            }
+            verifier = vcb.BibtexCitationVerifier(
+                bib_path=bib, tex_dir=texdir, strict=True,
+            )
+            with mock.patch.object(
+                    vcb, "verify_doi", return_value=(True, doi_meta)), \
+                    mock.patch.object(vcb, "search_external") as external_lookup, \
+                    mock.patch.object(vcb.time, "sleep"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                passed = verifier.run()
+            self.assertTrue(passed)
+            self.assertEqual(
+                verifier.results["paper"]["status"],
+                vcb.BibtexCitationVerifier.VERIFIED,
+            )
+            external_lookup.assert_not_called()
 
     def test_tex_read_error_fails_even_without_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:
