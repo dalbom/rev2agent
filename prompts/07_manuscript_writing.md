@@ -311,7 +311,7 @@ python scripts/verify_citations_bibtex.py \
 grep -rn "NEEDS-VERIFICATION" {project_dir}/manuscript/
 ```
 
-The citation verifier requires bibliographic metadata agreement from DOI, Crossref (primary), or Semantic Scholar (fallback): title, authors, year, and venue when both records provide one. A reachable URL is not verification evidence and the verifier does not fetch arbitrary URLs from BibTeX. Entries flagged as SUSPICIOUS due to identity or structural mismatches are the most common LLM hallucination type (correct-sounding title, wrong metadata).
+The citation verifier requires each identity source (DOI, Crossref, or Semantic Scholar) to provide a nonempty title, at least one usable author, and a year, all agreeing with BibTeX. Venue is optional but must agree when both records provide one. Incomplete source metadata is inconclusive and triggers fallback or `UNVERIFIED`, not a verified status. A reachable URL is not verification evidence and the verifier does not fetch arbitrary URLs from BibTeX. Entries flagged as SUSPICIOUS due to identity or structural mismatches are the most common LLM hallucination type (correct-sounding title, wrong metadata).
 
 **Exit-code semantics:** with `--strict`, the script exits non-zero on any SUSPICIOUS or UNVERIFIED entry. (Without `--strict`, it exits 2 when SUSPICIOUS > 0.) A non-zero exit means the gate has NOT passed.
 

@@ -912,6 +912,7 @@ class BibtexCitationVerifier:
     # override otherwise-valid identity evidence.
     SOFT_ISSUE_MARKERS = (
         "network error",
+        "metadata incomplete",
     )
 
     TITLE_SIMILARITY_THRESHOLD = 0.5
@@ -988,6 +989,53 @@ class BibtexCitationVerifier:
             return cls.EXT_VERIFIED
         return cls.UNVERIFIED
 
+    @staticmethod
+    def _usable_metadata_authors(metadata: Dict) -> List[str]:
+        """Return source author names that contain a usable family name."""
+        authors = metadata.get("authors", [])
+        if not isinstance(authors, (list, tuple)):
+            return []
+        return [
+            author.strip()
+            for author in authors
+            if isinstance(author, str) and _normalized_last_name(author)
+        ]
+
+    @staticmethod
+    def _has_usable_metadata_year(metadata: Dict) -> bool:
+        """Return whether source metadata supplies a plausible publication year."""
+        year = metadata.get("year")
+        if isinstance(year, bool):
+            return False
+        try:
+            return int(year) > 0
+        except (TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _metadata_identity_gaps(cls, metadata: Dict) -> List[str]:
+        """List required identity fields absent or unusable in source metadata."""
+        gaps: List[str] = []
+        title = metadata.get("title")
+        if not isinstance(title, str) or not title.strip():
+            gaps.append("title")
+        if not cls._usable_metadata_authors(metadata):
+            gaps.append("authors")
+        if not cls._has_usable_metadata_year(metadata):
+            gaps.append("year")
+        return gaps
+
+    def _record_incomplete_metadata(
+        self, source_label: str, gaps: List[str], result: Dict
+    ) -> None:
+        issue = (
+            f"{source_label} metadata incomplete "
+            f"(missing or unusable {', '.join(gaps)}); "
+            "not used as verification evidence"
+        )
+        result["issues"].append(issue)
+        self._out(f"    [i] {issue}")
+
     def _compare_metadata(
         self,
         fields: Dict[str, str],
@@ -998,7 +1046,7 @@ class BibtexCitationVerifier:
         """Compare identity-bearing metadata using one conservative policy."""
         bib_title = fields.get("title", "")
         metadata_title = metadata.get("title", "")
-        if bib_title and metadata_title:
+        if bib_title and isinstance(metadata_title, str) and metadata_title.strip():
             sim = title_similarity(bib_title, metadata_title)
             self._out(f"    {source_label} title similarity: {sim:.1%}")
             if sim < self.TITLE_SIMILARITY_THRESHOLD:
@@ -1011,7 +1059,7 @@ class BibtexCitationVerifier:
                 self._out(f"    [!] {issue}")
 
         bib_author = fields.get("author", "")
-        metadata_authors = metadata.get("authors", [])
+        metadata_authors = self._usable_metadata_authors(metadata)
         if bib_author and metadata_authors:
             auth_sim, auth_mismatches = author_similarity(
                 bib_author, metadata_authors
@@ -1028,7 +1076,7 @@ class BibtexCitationVerifier:
 
         bib_year = fields.get("year", "")
         metadata_year = metadata.get("year")
-        if bib_year and metadata_year:
+        if bib_year and self._has_usable_metadata_year(metadata):
             try:
                 years_match = int(bib_year) == int(metadata_year)
             except (ValueError, TypeError):
@@ -1227,10 +1275,16 @@ class BibtexCitationVerifier:
                                        {"success": success, "metadata": metadata})
 
                 if success:
-                    result["doi_verified"] = True
                     result["doi_metadata"] = metadata
                     self._out("    DOI metadata received")
                     self._compare_metadata(fields, metadata, "DOI", result)
+                    identity_gaps = self._metadata_identity_gaps(metadata)
+                    if identity_gaps:
+                        self._record_incomplete_metadata(
+                            "DOI", identity_gaps, result
+                        )
+                    elif not result["mismatch"]:
+                        result["doi_verified"] = True
                 else:
                     err = metadata.get("error", "unknown error")
                     if metadata.get("network_error"):
@@ -1279,8 +1333,12 @@ class BibtexCitationVerifier:
 
                     self._compare_metadata(fields, ext_meta, src_label, result)
 
-                    # Ext verified if no mismatch found in this step
-                    if not result["mismatch"]:
+                    identity_gaps = self._metadata_identity_gaps(ext_meta)
+                    if identity_gaps:
+                        self._record_incomplete_metadata(
+                            src_label, identity_gaps, result
+                        )
+                    elif not result["mismatch"]:
                         result["ext_verified"] = True
                 else:
                     err = ext_meta.get("error", "unknown")
@@ -1472,8 +1530,8 @@ Checks performed:
   - Parse .bib and extract all entries
   - Scan .tex files for \\cite{} commands
   - Cross-check: missing keys, orphan entries
-  - DOI metadata agreement (title, authors, year, venue)
-  - Crossref / Semantic Scholar metadata agreement when DOI proof is unavailable
+  - DOI metadata agreement (required title/authors/year; venue when available)
+  - Crossref / Semantic Scholar agreement under the same identity requirements
   - Report URL presence without fetching arbitrary BibTeX URLs
   - Hallucination pattern detection (generic titles, future years,
     anachronistic terms, missing fields, unverifiable entries)

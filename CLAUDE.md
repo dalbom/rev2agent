@@ -282,7 +282,7 @@ Detailed protocols live with the phase that owns them. Do not duplicate here —
 | Evidence-Driven Refinement (research question re-review) | `prompts/04_experiment_design.md` (Refinement Mode) |
 | Manuscript Review Panel (5-reviewer simulation) | `prompts/08_manuscript_review.md` |
 
-**Global rule (applies to all phases):** LLMs hallucinate ~30% of citations. NEVER write BibTeX from memory. Every reference must be web-verified against DBLP / Crossref / Semantic Scholar / publisher before inclusion. The verification script (`scripts/verify_citations_bibtex.py`) requires title/author/year/venue agreement with DOI, Crossref, or Semantic Scholar metadata. URL accessibility is not verification evidence. Any entry with status `SUSPICIOUS` due to metadata or structural mismatch must be corrected before the manuscript is presented to the user. See Phase 7 Step 4.1 for the full verification procedure.
+**Global rule (applies to all phases):** LLMs hallucinate ~30% of citations. NEVER write BibTeX from memory. Every reference must be web-verified against DBLP / Crossref / Semantic Scholar / publisher before inclusion. The verification script (`scripts/verify_citations_bibtex.py`) requires a nonempty title, at least one usable author, and a year from DOI, Crossref, or Semantic Scholar, with venue agreement when both records provide one. Incomplete source metadata is `UNVERIFIED`, and URL accessibility is not verification evidence. Any entry with status `SUSPICIOUS` due to metadata or structural mismatch must be corrected before the manuscript is presented to the user. See Phase 7 Step 4.1 for the full verification procedure.
 
 **Global rule (applies to Phase 6 and any phase that cites experiment results):** Run `scripts/collect_results.py` before making ANY numerical claim about experiment outcomes. The generated `comparison_table.json` is the single source of truth for all metrics. Numbers cited from memory or manual file reading are prohibited.
 
@@ -318,7 +318,7 @@ When the user returns and runs `claude` again:
 See the Directory Structure section at the top for file locations.
 
 **Scripts** (`scripts/` — used by prompts at designated quality gates):
-- `verify_citations_bibtex.py` — BibTeX verification: DOI/Crossref/Semantic Scholar metadata agreement (title/author/year/venue), hallucination pattern detection
+- `verify_citations_bibtex.py` — BibTeX verification: DOI/Crossref/Semantic Scholar identity agreement (required title/author/year; venue when available), hallucination pattern detection
 - `source_evaluator.py` — source credibility scoring for literature search
 - `validate_manuscript.py` — LaTeX cross-ref, placeholder, figure validation
 - `collect_results.py` — automated experiment result collection with provenance tracking

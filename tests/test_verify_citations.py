@@ -600,6 +600,16 @@ class TestAuthorNormalization(unittest.TestCase):
 
 
 class TestCitationIdentityRun(unittest.TestCase):
+    COMPLETE_BIB = (
+        "@article{paper,\n"
+        "  title = {Identity Matters},\n"
+        "  author = {Smith, John},\n"
+        "  journal = {Journal of Testing},\n"
+        "  year = {2024},\n"
+        "  doi = {10.1234/identity}\n"
+        "}\n"
+    )
+
     def _paths(self, root, bib_text, tex=r"\cite{paper}"):
         bib = root / "refs.bib"
         bib.write_text(bib_text, encoding="utf-8")
@@ -739,6 +749,128 @@ class TestCitationIdentityRun(unittest.TestCase):
                 vcb.BibtexCitationVerifier.VERIFIED,
             )
             external_lookup.assert_not_called()
+
+    def test_incomplete_doi_without_fallback_is_unverified_in_strict_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            bib, texdir = self._paths(Path(td), self.COMPLETE_BIB)
+            doi_meta = {
+                "title": "Identity Matters",
+                "authors": [],
+                "year": None,
+                "venue": "",
+            }
+            external_lookup = mock.Mock(
+                return_value=(False, {"error": "no matching metadata"})
+            )
+            verifier = vcb.BibtexCitationVerifier(
+                bib_path=bib, tex_dir=texdir, strict=True,
+            )
+            with mock.patch.object(vcb, "verify_doi", return_value=(True, doi_meta)), \
+                    mock.patch.object(vcb, "search_external", external_lookup), \
+                    mock.patch.object(vcb.time, "sleep"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                passed = verifier.run()
+            result = verifier.results["paper"]
+            self.assertFalse(passed)
+            self.assertFalse(result["doi_verified"])
+            self.assertFalse(result["ext_verified"])
+            self.assertEqual(result["status"], vcb.BibtexCitationVerifier.UNVERIFIED)
+            self.assertTrue(
+                any("DOI metadata incomplete" in issue for issue in result["issues"]),
+                result["issues"],
+            )
+            self.assertTrue(all(verifier._is_soft_issue(i) for i in result["issues"]))
+            external_lookup.assert_called_once()
+
+    def test_incomplete_doi_falls_back_to_complete_external_metadata(self):
+        with tempfile.TemporaryDirectory() as td:
+            bib, texdir = self._paths(Path(td), self.COMPLETE_BIB)
+            doi_meta = {
+                "title": "Identity Matters",
+                "authors": [],
+                "year": None,
+                "venue": "",
+            }
+            ext_meta = {
+                "title": "Identity Matters",
+                "authors": ["John Smith"],
+                "year": 2024,
+                "venue": "Journal of Testing",
+                "source": "crossref",
+                "title_similarity": 1.0,
+            }
+            external_lookup = mock.Mock(return_value=(True, ext_meta))
+            verifier = vcb.BibtexCitationVerifier(
+                bib_path=bib, tex_dir=texdir, strict=True,
+            )
+            with mock.patch.object(vcb, "verify_doi", return_value=(True, doi_meta)), \
+                    mock.patch.object(vcb, "search_external", external_lookup), \
+                    mock.patch.object(vcb.time, "sleep"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                passed = verifier.run()
+            result = verifier.results["paper"]
+            self.assertTrue(passed)
+            self.assertFalse(result["doi_verified"])
+            self.assertTrue(result["ext_verified"])
+            self.assertEqual(result["status"], vcb.BibtexCitationVerifier.EXT_VERIFIED)
+            self.assertTrue(
+                any("DOI metadata incomplete" in issue for issue in result["issues"]),
+                result["issues"],
+            )
+            external_lookup.assert_called_once()
+
+    def test_incomplete_external_identity_sources_are_unverified(self):
+        incomplete_cases = {
+            "title": {
+                "title": "",
+                "authors": ["John Smith"],
+                "year": 2024,
+            },
+            "authors": {
+                "title": "Identity Matters",
+                "authors": ["   "],
+                "year": 2024,
+            },
+            "year": {
+                "title": "Identity Matters",
+                "authors": ["John Smith"],
+                "year": None,
+            },
+        }
+        for missing_field, ext_meta in incomplete_cases.items():
+            with self.subTest(missing_field=missing_field), \
+                    tempfile.TemporaryDirectory() as td:
+                bib_text = self.COMPLETE_BIB.replace(
+                    "  doi = {10.1234/identity}\n", ""
+                )
+                bib, texdir = self._paths(Path(td), bib_text)
+                ext_meta.update({
+                    "venue": "Journal of Testing",
+                    "source": "crossref",
+                    "title_similarity": 1.0,
+                })
+                verifier = vcb.BibtexCitationVerifier(
+                    bib_path=bib, tex_dir=texdir, strict=True,
+                )
+                with mock.patch.object(
+                        vcb, "search_external", return_value=(True, ext_meta)), \
+                        mock.patch.object(vcb.time, "sleep"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    passed = verifier.run()
+                result = verifier.results["paper"]
+                self.assertFalse(passed)
+                self.assertFalse(result["ext_verified"])
+                self.assertEqual(
+                    result["status"], vcb.BibtexCitationVerifier.UNVERIFIED
+                )
+                self.assertTrue(
+                    any(
+                        "Crossref metadata incomplete" in issue
+                        and missing_field in issue
+                        for issue in result["issues"]
+                    ),
+                    result["issues"],
+                )
 
     def test_tex_read_error_fails_even_without_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:
