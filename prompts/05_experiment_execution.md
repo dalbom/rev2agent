@@ -199,7 +199,7 @@ Update INDEX.md every time a new result file is created.
 
 ## Checkpoint and Marker Configuration Contract (MANDATORY)
 
-Before launching each experiment, fully resolve defaults, inherited settings, dataset/split versions, and code revision into `resolved_config`. Compute `config_fingerprint` as SHA-256 over canonical JSON (UTF-8, keys sorted, stable separators) of the experiment configuration with only the per-run `seed` removed. Store the seed separately. This makes the fingerprint seed-independent for one experiment configuration while keeping seed identity explicit.
+Before launching each experiment, fully resolve defaults, inherited settings, dataset/split versions, and code revision into `resolved_config`. Compute `config_fingerprint` as SHA-256 over canonical JSON (UTF-8, keys sorted, stable separators) of the experiment configuration with only the per-run `seed` removed, and store it in the exact wire format `sha256:<64 lowercase hex characters>`. Store the seed separately. This makes the fingerprint seed-independent for one experiment configuration while keeping seed identity explicit. The collector independently recomputes this digest and rejects mismatches. For an aggregate artifact only, exclude both `seed` and `contributing_seeds` when recomputing the digest: `contributing_seeds` is aggregate provenance, not experiment configuration.
 
 Every checkpoint under `{project_dir}/experiment/checkpoints/{run_dir}/` and every `COMPLETED` or `FAILED` marker under `{project_dir}/experiment/results/{run_dir}/` must be structured data containing `resolved_config`, `config_fingerprint`, seed, timestamp, and exact immutable log path. Each `run_dir` represents exactly one experiment ID and seed; never share a run marker or checkpoint across seeds.
 

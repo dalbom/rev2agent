@@ -1,6 +1,7 @@
 """Tests for scripts/collect_results.py."""
 
 import contextlib
+import hashlib
 import io
 import json
 import math
@@ -21,17 +22,33 @@ def write_json(path, data):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def complete_meta(experiment_id="E01", seed=0, fingerprint="cfg-v1", round_=1):
+def complete_meta(experiment_id="E01", seed=0, fingerprint=None, round_=1):
+    resolved_config = {"model": experiment_id}
+    if fingerprint is None:
+        fingerprint = fingerprint_config(
+            resolved_config, aggregate=seed == "aggregate"
+        )
     return {
         "experiment_id": experiment_id,
         "config_fingerprint": fingerprint,
         "script": "scripts/eval.py",
         "log_file": "logs/eval.log",
         "timestamp": "2026-07-10T00:00:00Z",
-        "resolved_config": {"model": experiment_id},
+        "resolved_config": resolved_config,
         "round": round_,
         "seed": seed,
     }
+
+
+def fingerprint_config(config, *, aggregate=False):
+    canonical = dict(config)
+    canonical.pop("seed", None)
+    if aggregate:
+        canonical.pop("contributing_seeds", None)
+    payload = json.dumps(
+        canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 RESULT_A = {
@@ -171,6 +188,47 @@ class TestMetaHandling(unittest.TestCase):
             self.assertEqual(collected["entries"], [])
             self.assertEqual(len(collected["warnings"]), len(invalid_cases))
 
+    def test_fingerprint_mismatch_rejects_different_configs_before_aggregation(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            config_a = {"model": "A", "seed": 0}
+            fingerprint_a = fingerprint_config(config_a)
+
+            for filename, seed, config, accuracy in [
+                ("seed0.json", 0, config_a, 0.9),
+                ("seed1.json", 1, {"model": "B", "seed": 1}, 0.1),
+            ]:
+                meta = complete_meta(seed=seed, fingerprint=fingerprint_a)
+                meta["resolved_config"] = config
+                write_json(tdir / filename, {"_meta": meta, "accuracy": accuracy})
+
+            collected = cr.collect_results(tdir)
+
+            self.assertEqual([entry["file"] for entry in collected["entries"]], ["seed0.json"])
+            self.assertEqual(collected["aggregates"], [])
+            self.assertTrue(
+                any("config_fingerprint mismatch" in warning for warning in collected["warnings"]),
+                collected["warnings"],
+            )
+
+    def test_fingerprint_uses_documented_sha256_wire_format(self):
+        config = {"model": "E01", "seed": 7}
+        fingerprint = fingerprint_config(config)
+        self.assertRegex(fingerprint, r"^sha256:[0-9a-f]{64}$")
+
+        valid = complete_meta(seed=7, fingerprint=fingerprint)
+        valid["resolved_config"] = config
+        _, valid_errors = cr.extract_meta({"_meta": valid})
+        self.assertEqual(valid_errors, [])
+
+        invalid = dict(valid)
+        invalid["config_fingerprint"] = fingerprint.removeprefix("sha256:")
+        _, invalid_errors = cr.extract_meta({"_meta": invalid})
+        self.assertTrue(
+            any("config_fingerprint mismatch" in error for error in invalid_errors),
+            invalid_errors,
+        )
+
 
 class TestNoPathInference(unittest.TestCase):
     def test_round_is_not_inferred_from_path(self):
@@ -243,16 +301,16 @@ class TestSeedAggregation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             tdir = Path(td)
             cases = [
-                ("E01", "cfg-a", 0, 0.90),
-                ("E01", "cfg-a", 1, 0.80),
-                ("E02", "cfg-b", 0, 0.20),
-                ("E02", "cfg-b", 1, 0.10),
+                ("E01", 0, 0.90),
+                ("E01", 1, 0.80),
+                ("E02", 0, 0.20),
+                ("E02", 1, 0.10),
             ]
-            for experiment_id, fingerprint, seed, accuracy in cases:
+            for experiment_id, seed, accuracy in cases:
                 write_json(
                     tdir / f"{experiment_id}_{seed}.json",
                     {
-                        "_meta": complete_meta(experiment_id, seed, fingerprint),
+                        "_meta": complete_meta(experiment_id, seed),
                         "accuracy": accuracy,
                     },
                 )
@@ -262,12 +320,14 @@ class TestSeedAggregation(unittest.TestCase):
                 (item["experiment_id"], item["config_fingerprint"]): item
                 for item in collected["aggregates"]
             }
-            self.assertEqual(set(aggregates), {("E01", "cfg-a"), ("E02", "cfg-b")})
+            fp_a = fingerprint_config({"model": "E01"})
+            fp_b = fingerprint_config({"model": "E02"})
+            self.assertEqual(set(aggregates), {("E01", fp_a), ("E02", fp_b)})
             self.assertAlmostEqual(
-                aggregates[("E01", "cfg-a")]["metrics"]["accuracy"]["mean"], 0.85
+                aggregates[("E01", fp_a)]["metrics"]["accuracy"]["mean"], 0.85
             )
             self.assertAlmostEqual(
-                aggregates[("E02", "cfg-b")]["metrics"]["accuracy"]["mean"], 0.15
+                aggregates[("E02", fp_b)]["metrics"]["accuracy"]["mean"], 0.15
             )
 
     def test_duplicate_seed_identity_warns_and_suppresses_aggregate(self):
@@ -445,7 +505,7 @@ class TestSeedAggregation(unittest.TestCase):
             md = cr.format_markdown(collected)
             self.assertIn("Seed Aggregates", md)
             self.assertIn("E01", md)
-            self.assertIn("cfg-v1", md)
+            self.assertIn(fingerprint_config({"model": "E01"}), md)
             self.assertIn("0.9200", md)
 
 

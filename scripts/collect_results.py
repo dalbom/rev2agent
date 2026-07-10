@@ -19,6 +19,7 @@ Requires only Python 3.10+ stdlib (no external dependencies).
 
 import sys
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -30,6 +31,29 @@ from typing import Any, Dict, List, Optional, Tuple
 # Top-level keys that identify this script's own output (comparison table).
 # Such files must never be re-ingested as experiment results.
 _OUTPUT_SIGNATURE_KEYS = {"results_dir", "files_scanned", "entries"}
+
+
+def compute_config_fingerprint(
+    resolved_config: Dict[str, Any], *, aggregate: bool = False
+) -> str:
+    """Return the canonical SHA-256 fingerprint required by Phase 5.
+
+    ``seed`` is run identity rather than configuration identity. Aggregate
+    files additionally carry ``contributing_seeds`` as provenance, so that
+    field is excluded only for aggregate artifacts.
+    """
+    canonical_config = dict(resolved_config)
+    canonical_config.pop("seed", None)
+    if aggregate:
+        canonical_config.pop("contributing_seeds", None)
+    canonical_json = json.dumps(
+        canonical_config,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
 
 
 def is_own_output(data: Any) -> bool:
@@ -203,6 +227,21 @@ def extract_meta(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
         ):
             errors.append(
                 '_meta.seed must be a nonnegative integer or "aggregate"'
+            )
+
+    fingerprint = meta.get("config_fingerprint")
+    if (
+        isinstance(resolved_config, dict)
+        and isinstance(fingerprint, str)
+        and fingerprint.strip()
+    ):
+        expected_fingerprint = compute_config_fingerprint(
+            resolved_config, aggregate=meta.get("seed") == "aggregate"
+        )
+        if fingerprint != expected_fingerprint:
+            errors.append(
+                "_meta.config_fingerprint mismatch: expected SHA-256 of "
+                "canonical _meta.resolved_config"
             )
 
     return meta, errors
