@@ -9,6 +9,7 @@
 !/scripts/
 !/tests/
 !/.github/
+!/docs/
 
 # LaTeX compiler binary (users download it to the repo root)
 /tectonic
