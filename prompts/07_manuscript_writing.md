@@ -298,7 +298,7 @@ python scripts/validate_manuscript.py \
     --bib references.bib \
     --output {project_dir}/manuscript/validation_report.txt
 
-# 2. Verify BibTeX citations (DOI + Crossref/S2 cross-check)
+# 2. Verify BibTeX identity (DOI/Crossref/S2 metadata agreement)
 #    NOTE: --tex-dir scans the WHOLE manuscript directory, not just sections/ —
 #    citations in main.tex must also be checked.
 python scripts/verify_citations_bibtex.py \
@@ -311,7 +311,7 @@ python scripts/verify_citations_bibtex.py \
 grep -rn "NEEDS-VERIFICATION" {project_dir}/manuscript/
 ```
 
-The citation verifier cross-checks against Crossref (primary) and Semantic Scholar (fallback) in addition to DOI resolution. Entries flagged as SUSPICIOUS due to author/year/venue mismatch are the most common LLM hallucination type (correct-sounding title, wrong metadata).
+The citation verifier requires bibliographic metadata agreement from DOI, Crossref (primary), or Semantic Scholar (fallback): title, authors, year, and venue when both records provide one. A reachable URL is not verification evidence and the verifier does not fetch arbitrary URLs from BibTeX. Entries flagged as SUSPICIOUS due to identity or structural mismatches are the most common LLM hallucination type (correct-sounding title, wrong metadata).
 
 **Exit-code semantics:** with `--strict`, the script exits non-zero on any SUSPICIOUS or UNVERIFIED entry. (Without `--strict`, it exits 2 when SUSPICIOUS > 0.) A non-zero exit means the gate has NOT passed.
 

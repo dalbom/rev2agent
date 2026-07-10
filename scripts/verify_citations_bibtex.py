@@ -3,9 +3,10 @@
 BibTeX Citation Verification Script
 
 Adapted from deep-research verify_citations.py for LaTeX manuscript projects.
-Verifies BibTeX entries against DOI metadata, checks URL accessibility,
-cross-references .tex citations with .bib entries, and detects common
-LLM hallucination patterns in fabricated references.
+Verifies BibTeX entries by agreement with DOI, Crossref, or Semantic Scholar
+metadata; cross-references .tex citations with .bib entries; and detects
+common LLM hallucination patterns in fabricated references. BibTeX URLs are
+reported as informational fields and are never fetched as verification proof.
 
 Usage:
     python verify_citations_bibtex.py --bib references.bib --tex-dir sections/
@@ -328,7 +329,7 @@ def verify_doi(doi: str, retries: int = 3) -> Tuple[bool, Dict]:
             issued = data.get("issued", {}).get("date-parts", [[None]])
             year = issued[0][0] if issued and issued[0] else None
             authors = [
-                f"{a.get('family', '')} {a.get('given', '')}".strip()
+                f"{a.get('given', '')} {a.get('family', '')}".strip()
                 for a in data.get("author", [])
             ]
             return True, {
@@ -338,12 +339,14 @@ def verify_doi(doi: str, retries: int = 3) -> Tuple[bool, Dict]:
                 "venue": data.get("container-title", ""),
             }
         except error.HTTPError as e:
-            if e.code == 404:
+            code = e.code
+            e.close()
+            if code == 404:
                 return False, {"error": "DOI not found (404)"}
-            if e.code == 429 or e.code >= 500:
-                last_err = f"HTTP {e.code}"  # transient: retry
+            if code == 429 or code >= 500:
+                last_err = f"HTTP {code}"  # transient: retry
             else:
-                return False, {"error": f"HTTP {e.code}"}
+                return False, {"error": f"HTTP {code}"}
         except error.URLError as e:
             last_err = f"URL error: {e.reason}"
         except (TimeoutError, OSError) as e:
@@ -360,7 +363,10 @@ def verify_doi(doi: str, retries: int = 3) -> Tuple[bool, Dict]:
 
 def verify_url(url: str) -> Tuple[bool, str]:
     """
-    Check URL accessibility with a HEAD request.
+    Check URL accessibility with a HEAD request (compatibility helper only).
+
+    The full citation verifier deliberately does not call this helper because
+    reachability cannot establish bibliographic identity.
 
     Returns (accessible, status_message).
     """
@@ -372,10 +378,12 @@ def verify_url(url: str) -> Tuple[bool, str]:
                 return True, f"HTTP {resp.status} OK"
             return False, f"HTTP {resp.status}"
     except error.HTTPError as e:
+        code = e.code
+        e.close()
         # Some servers reject HEAD but the resource exists; 403/405 are ambiguous
-        if e.code in (403, 405):
-            return True, f"HTTP {e.code} (HEAD rejected, resource likely exists)"
-        return False, f"HTTP {e.code}"
+        if code in (403, 405):
+            return True, f"HTTP {code} (HEAD rejected, resource likely exists)"
+        return False, f"HTTP {code}"
     except error.URLError as e:
         return False, f"URL error: {e.reason}"
     except Exception as e:
@@ -402,6 +410,17 @@ def title_similarity(t1: str, t2: str) -> float:
     # Containment: fraction of the SMALLER set that appears in the larger
     containment = intersection / min(len(w1), len(w2))
     return max(jaccard, containment)
+
+
+def venue_similarity(v1: str, v2: str) -> float:
+    """Compare venues without letting generic stopwords imply agreement."""
+    stopwords = {"a", "an", "and", "for", "in", "of", "on", "the"}
+
+    def without_stopwords(value: str) -> str:
+        words = re.findall(r"\w+", value.casefold())
+        return " ".join(word for word in words if word not in stopwords)
+
+    return title_similarity(without_stopwords(v1), without_stopwords(v2))
 
 
 # ---------------------------------------------------------------------------
@@ -462,10 +481,12 @@ def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None,
                 _note(f"JSON decode error from {endpoint}: {str(e)[:80]}")
                 return None
         except error.HTTPError as e:
-            if e.code == 429 or e.code >= 500:
-                last_err = f"HTTP {e.code}"  # transient: retry
+            code = e.code
+            e.close()
+            if code == 429 or code >= 500:
+                last_err = f"HTTP {code}"  # transient: retry
             else:
-                _note(f"HTTP {e.code} from {endpoint}")
+                _note(f"HTTP {code} from {endpoint}")
                 return None
         except error.URLError as e:
             last_err = f"URL error: {e.reason}"
@@ -623,6 +644,42 @@ def search_external(title: str, enable_s2: bool = True,
     return False, meta  # return Crossref's error
 
 
+_LATEX_ACCENT_RE = re.compile(
+    r"\{?\\(?:['\"`~^=.cuvHtdb])\s*\{?([A-Za-z])\}?\}?"
+)
+
+
+def _strip_diacritics(s: str) -> str:
+    """Remove Unicode diacritics: ü→u, ç→c, ö→o, etc."""
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _clean_author_name(name: str) -> str:
+    """Normalize LaTeX/Unicode accents and case symmetrically for name matching."""
+    clean = name
+    # Accent commands may be braced ({\"a}) or unbraced (\"a).
+    previous = None
+    while clean != previous:
+        previous = clean
+        clean = _LATEX_ACCENT_RE.sub(r"\1", clean)
+        clean = re.sub(r"\\[A-Za-z]+\{([^{}]*)\}", r"\1", clean)
+    clean = re.sub(r"[{}]", "", clean)
+    clean = _strip_diacritics(clean).casefold()
+    return re.sub(r"\s+", " ", clean).strip()
+
+
+def _normalized_last_name(name: str) -> str:
+    """Extract a normalized family name from either BibTeX or API name order."""
+    clean = _clean_author_name(name)
+    if not clean:
+        return ""
+    if "," in clean:
+        return clean.split(",", 1)[0].strip()
+    words = clean.split()
+    return words[-1] if words else ""
+
+
 def parse_bib_authors(bib_author: str) -> List[str]:
     """
     Parse BibTeX author field into a list of normalized last names.
@@ -641,42 +698,25 @@ def parse_bib_authors(bib_author: str) -> List[str]:
         part = part.strip()
         if not part:
             continue
-        # Strip LaTeX accents: {\"o} -> o, {\c{c}} -> c, etc.
-        part = re.sub(r"\{?\\['\"`~^=.cuvHtdb]\{?(\w)\}?\}?", r"\1", part)
-        part = re.sub(r"[{}]", "", part)
-        if "," in part:
-            # "Last, First" format
-            last = part.split(",")[0].strip()
-        else:
-            # "First Last" format — last word is the last name
-            words = part.split()
-            last = words[-1] if words else part
-        last_names.append(last.lower().strip())
+        last = _normalized_last_name(part)
+        if last:
+            last_names.append(last)
     return last_names
 
 
-def _strip_diacritics(s: str) -> str:
-    """Remove diacritics: ü→u, ç→c, ö→o, etc."""
-    nfkd = unicodedata.normalize("NFKD", s)
-    return "".join(c for c in nfkd if not unicodedata.combining(c))
-
-
 def parse_s2_authors(s2_authors: List[str]) -> List[str]:
-    """Extract normalized last names from external API author name list."""
+    """Extract normalized family names from external API author name lists."""
     last_names = []
     for name in s2_authors:
-        name = name.strip()
-        if not name:
-            continue
-        words = name.split()
-        last = words[-1].lower() if words else name.lower()
-        last_names.append(_strip_diacritics(last))
+        last = _normalized_last_name(name)
+        if last:
+            last_names.append(last)
     return last_names
 
 
 def author_similarity(bib_author: str, s2_authors: List[str]) -> Tuple[float, List[str]]:
     """
-    Compare BibTeX author string against S2 author list.
+    Compare a BibTeX author string against an external metadata author list.
 
     Returns (similarity_score, list_of_mismatches).
     Similarity is Jaccard on last-name sets.
@@ -687,7 +727,7 @@ def author_similarity(bib_author: str, s2_authors: List[str]) -> Tuple[float, Li
     if not bib_lasts and not s2_lasts:
         return 1.0, []
     if not bib_lasts or not s2_lasts:
-        return 0.0, [f"bib={list(bib_lasts)}, s2={list(s2_lasts)}"]
+        return 0.0, [f"bib={list(bib_lasts)}, metadata={list(s2_lasts)}"]
 
     intersection = bib_lasts & s2_lasts
     union = bib_lasts | s2_lasts
@@ -699,7 +739,7 @@ def author_similarity(bib_author: str, s2_authors: List[str]) -> Tuple[float, Li
     if only_bib:
         mismatches.append(f"in bib only: {sorted(only_bib)}")
     if only_s2:
-        mismatches.append(f"in S2 only: {sorted(only_s2)}")
+        mismatches.append(f"in metadata only: {sorted(only_s2)}")
 
     return sim, mismatches
 
@@ -794,12 +834,6 @@ def detect_hallucination_patterns(entry: Dict[str, str]) -> List[str]:
                         )
                         break  # one flag is enough
 
-    # --- Unverifiable entry ---
-    doi = entry.get("doi", "")
-    url = entry.get("url", "")
-    if not doi and not url:
-        issues.append("No DOI and no URL -- cannot independently verify")
-
     return issues
 
 
@@ -848,6 +882,9 @@ def normalize_title_key(title: str) -> str:
     return re.sub(r"[^\w]+", " ", clean).strip()
 
 
+DOI_CACHE_PREFIX = "doi-v2:"
+
+
 # ---------------------------------------------------------------------------
 # Main Verifier Class
 # ---------------------------------------------------------------------------
@@ -860,7 +897,7 @@ class BibtexCitationVerifier:
         1. Parse .bib file
         2. Scan .tex files for \\cite{} references
         3. Cross-check cited keys vs. .bib keys
-        4. For each .bib entry: hallucination patterns, DOI check, URL check
+        4. For each .bib entry: hallucination patterns and metadata agreement
         5. Produce a verification report
     """
 
@@ -872,11 +909,14 @@ class BibtexCitationVerifier:
     UNVERIFIED = "UNVERIFIED"
 
     # Issues containing these markers are "soft": they do not, by themselves,
-    # make an otherwise-unverifiable entry SUSPICIOUS.
+    # override otherwise-valid identity evidence.
     SOFT_ISSUE_MARKERS = (
-        "No DOI and no URL",
         "network error",
     )
+
+    TITLE_SIMILARITY_THRESHOLD = 0.5
+    AUTHOR_SIMILARITY_THRESHOLD = 0.5
+    VENUE_SIMILARITY_THRESHOLD = 0.3
 
     def __init__(
         self,
@@ -906,6 +946,7 @@ class BibtexCitationVerifier:
         self.missing_keys: Set[str] = set()  # cited but not in .bib
         self.orphan_keys: Set[str] = set()   # in .bib but not cited
         self.suspicious_count: int = 0
+        self.scan_errors: List[str] = []
 
         self._report_lines: List[str] = []
 
@@ -923,30 +964,103 @@ class BibtexCitationVerifier:
 
     @classmethod
     def _is_soft_issue(cls, issue: str) -> bool:
-        return any(marker in issue for marker in cls.SOFT_ISSUE_MARKERS)
+        folded = issue.casefold()
+        return any(marker.casefold() in folded for marker in cls.SOFT_ISSUE_MARKERS)
 
     @classmethod
     def compute_entry_status(cls, result: Dict) -> str:
         """
         Compute the final status for one entry from explicit booleans.
-        Priority: mismatch / fabricated DOI > DOI > Crossref/S2 > URL > patterns.
+        Priority: mismatch / fabricated DOI > hard issues > identity evidence.
 
-        Expects keys: doi_verified, url_verified, ext_verified, mismatch,
-        doi_not_found, issues.
+        URL accessibility is deliberately ignored: it cannot establish
+        bibliographic identity.
         """
         if result.get("mismatch") or result.get("doi_not_found"):
+            return cls.SUSPICIOUS
+        hard_issues = [i for i in result.get("issues", [])
+                       if not cls._is_soft_issue(i)]
+        if hard_issues:
             return cls.SUSPICIOUS
         if result.get("doi_verified"):
             return cls.VERIFIED
         if result.get("ext_verified"):
             return cls.EXT_VERIFIED
-        if result.get("url_verified"):
-            return cls.URL_VERIFIED
-        hard_issues = [i for i in result.get("issues", [])
-                       if not cls._is_soft_issue(i)]
-        if hard_issues:
-            return cls.SUSPICIOUS
         return cls.UNVERIFIED
+
+    def _compare_metadata(
+        self,
+        fields: Dict[str, str],
+        metadata: Dict,
+        source_label: str,
+        result: Dict,
+    ) -> None:
+        """Compare identity-bearing metadata using one conservative policy."""
+        bib_title = fields.get("title", "")
+        metadata_title = metadata.get("title", "")
+        if bib_title and metadata_title:
+            sim = title_similarity(bib_title, metadata_title)
+            self._out(f"    {source_label} title similarity: {sim:.1%}")
+            if sim < self.TITLE_SIMILARITY_THRESHOLD:
+                issue = (
+                    f"Title mismatch ({source_label}): similarity {sim:.1%} "
+                    f"(metadata title: '{str(metadata_title)[:60]}...')"
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
+
+        bib_author = fields.get("author", "")
+        metadata_authors = metadata.get("authors", [])
+        if bib_author and metadata_authors:
+            auth_sim, auth_mismatches = author_similarity(
+                bib_author, metadata_authors
+            )
+            self._out(f"    {source_label} authors: similarity {auth_sim:.0%}")
+            if auth_sim < self.AUTHOR_SIMILARITY_THRESHOLD:
+                issue = (
+                    f"Author mismatch ({source_label}): "
+                    f"{'; '.join(auth_mismatches)}"
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
+
+        bib_year = fields.get("year", "")
+        metadata_year = metadata.get("year")
+        if bib_year and metadata_year:
+            try:
+                years_match = int(bib_year) == int(metadata_year)
+            except (ValueError, TypeError):
+                years_match = True  # structural validation reports malformed years
+            if not years_match:
+                issue = (
+                    f"Year mismatch ({source_label}): "
+                    f"bib={bib_year}, {source_label}={metadata_year}"
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
+
+        # Some APIs omit a container title. Absence is inconclusive; a
+        # contradiction is suspicious only when both sides provide a venue.
+        bib_venue = fields.get("booktitle", "") or fields.get("journal", "")
+        metadata_venue = metadata.get("venue", "")
+        if bib_venue and metadata_venue:
+            venue_sim = venue_similarity(bib_venue, metadata_venue)
+            self._out(
+                f"    {source_label} venue: \"{metadata_venue}\" "
+                f"(similarity: {venue_sim:.0%})"
+            )
+            if venue_sim < self.VENUE_SIMILARITY_THRESHOLD:
+                issue = (
+                    f"Venue mismatch ({source_label}): "
+                    f"bib=\"{bib_venue[:50]}\", "
+                    f"{source_label}=\"{str(metadata_venue)[:50]}\""
+                )
+                result["issues"].append(issue)
+                result["mismatch"] = True
+                self._out(f"    [!] {issue}")
 
     # ---- Core workflow ----
 
@@ -1017,9 +1131,11 @@ class BibtexCitationVerifier:
         self._out("[2/5] Scanning .tex files for citations")
         self._out(f"      {self.tex_dir}")
 
-        self.cited_keys, self.key_to_files, scan_warnings = scan_tex_citations(self.tex_dir)
+        self.cited_keys, self.key_to_files, self.scan_errors = scan_tex_citations(
+            self.tex_dir
+        )
         self._out(f"      Found {len(self.cited_keys)} unique citation keys")
-        for w in scan_warnings:
+        for w in self.scan_errors:
             self._out(f"      [!] {w}")
 
         tex_files = sorted(self.tex_dir.rglob("*.tex"))
@@ -1073,6 +1189,7 @@ class BibtexCitationVerifier:
                 "issues": [],
                 "doi_verified": False,
                 "url_verified": False,
+                "url_present": bool(fields.get("url", "")),
                 "ext_verified": False,
                 "mismatch": False,        # metadata mismatch (title/author/year/venue)
                 "doi_not_found": False,   # DOI resolved to 404 (likely fabricated)
@@ -1094,7 +1211,9 @@ class BibtexCitationVerifier:
                 self._out(f"    DOI   : {doi}")
                 self._out(f"    Resolving DOI ...", )
 
-                cache_key = f"doi:{doi}"
+                # v2 invalidates records whose DOI authors were cached in the
+                # old Family Given order.
+                cache_key = f"{DOI_CACHE_PREFIX}{doi}"
                 cached = self.cache.get(cache_key) if self.cache else None
                 if cached is not None:
                     success, metadata = cached["success"], cached["metadata"]
@@ -1110,33 +1229,8 @@ class BibtexCitationVerifier:
                 if success:
                     result["doi_verified"] = True
                     result["doi_metadata"] = metadata
-                    self._out(f"    DOI resolved successfully")
-
-                    # Check title similarity
-                    if title and metadata.get("title"):
-                        sim = title_similarity(title, metadata["title"])
-                        self._out(f"    Title similarity: {sim:.1%}")
-                        if sim < 0.4:
-                            issue = (
-                                f"Title mismatch: similarity {sim:.1%} "
-                                f"(DOI title: '{metadata['title'][:60]}...')"
-                            )
-                            result["issues"].append(issue)
-                            result["mismatch"] = True
-                            self._out(f"    [!] {issue}")
-
-                    # Check year match
-                    bib_year = fields.get("year", "")
-                    doi_year = metadata.get("year")
-                    if bib_year and doi_year:
-                        try:
-                            if int(bib_year) != int(doi_year):
-                                issue = f"Year mismatch: .bib says {bib_year}, DOI says {doi_year}"
-                                result["issues"].append(issue)
-                                result["mismatch"] = True
-                                self._out(f"    [!] {issue}")
-                        except ValueError:
-                            pass
+                    self._out("    DOI metadata received")
+                    self._compare_metadata(fields, metadata, "DOI", result)
                 else:
                     err = metadata.get("error", "unknown error")
                     if metadata.get("network_error"):
@@ -1148,19 +1242,11 @@ class BibtexCitationVerifier:
             else:
                 self._out(f"    DOI   : (none)")
 
-            # 4c. URL verification
+            # 4c. Report URL presence without fetching arbitrary BibTeX URLs.
             url = fields.get("url", "")
             if url:
                 self._out(f"    URL   : {url}")
-                accessible, status_msg = verify_url(url)
-                time.sleep(0.5)  # rate limit
-
-                if accessible:
-                    result["url_verified"] = True
-                    self._out(f"    URL accessible: {status_msg}")
-                else:
-                    result["issues"].append(f"URL inaccessible: {status_msg}")
-                    self._out(f"    [X] URL inaccessible: {status_msg}")
+                self._out("    URL   : present (informational; not fetched)")
             else:
                 self._out(f"    URL   : (none)")
 
@@ -1191,45 +1277,7 @@ class BibtexCitationVerifier:
                     self._out(f"    {src_label:8s}: Match found (title similarity: {sim_pct:.0%})")
                     self._out(f"    {src_label:8s}: \"{ext_meta.get('title', '')[:70]}\"")
 
-                    # Author cross-check
-                    author = fields.get("author", "")
-                    ext_authors = ext_meta.get("authors", [])
-                    if author and ext_authors:
-                        auth_sim, auth_mismatches = author_similarity(author, ext_authors)
-                        self._out(f"    {src_label} authors: similarity {auth_sim:.0%}")
-                        if auth_sim < 0.5:
-                            issue = f"Author mismatch ({src_label}): {'; '.join(auth_mismatches)}"
-                            result["issues"].append(issue)
-                            result["mismatch"] = True
-                            self._out(f"    [!] {issue}")
-
-                    # Year cross-check
-                    ext_year = ext_meta.get("year")
-                    bib_year_str = fields.get("year", "")
-                    if bib_year_str and ext_year:
-                        try:
-                            if int(bib_year_str) != int(ext_year):
-                                issue = f"Year mismatch ({src_label}): bib={bib_year_str}, {src_label}={ext_year}"
-                                result["issues"].append(issue)
-                                result["mismatch"] = True
-                                self._out(f"    [!] {issue}")
-                        except (ValueError, TypeError):
-                            pass
-
-                    # Venue cross-check
-                    ext_venue = ext_meta.get("venue", "")
-                    bib_venue = fields.get("booktitle", "") or fields.get("journal", "")
-                    if ext_venue and bib_venue:
-                        venue_sim = title_similarity(bib_venue, ext_venue)
-                        self._out(f"    {src_label} venue: \"{ext_venue}\" (similarity: {venue_sim:.0%})")
-                        if venue_sim < 0.3:
-                            issue = (
-                                f"Venue mismatch ({src_label}): "
-                                f"bib=\"{bib_venue[:50]}\", {src_label}=\"{ext_venue[:50]}\""
-                            )
-                            result["issues"].append(issue)
-                            result["mismatch"] = True
-                            self._out(f"    [!] {issue}")
+                    self._compare_metadata(fields, ext_meta, src_label, result)
 
                     # Ext verified if no mismatch found in this step
                     if not result["mismatch"]:
@@ -1245,9 +1293,8 @@ class BibtexCitationVerifier:
             result["status"] = self.compute_entry_status(result)
 
             status_display = {
-                self.VERIFIED: "VERIFIED (DOI)",
-                self.EXT_VERIFIED: f"VERIFIED ({ext_label})",
-                self.URL_VERIFIED: "VERIFIED (URL)",
+                self.VERIFIED: "VERIFIED (DOI metadata agreement)",
+                self.EXT_VERIFIED: f"VERIFIED ({ext_label} metadata agreement)",
                 self.SUSPICIOUS: "SUSPICIOUS",
                 self.UNVERIFIED: "UNVERIFIED",
             }
@@ -1266,9 +1313,16 @@ class BibtexCitationVerifier:
 
         verified = [k for k, r in self.results.items() if r["status"] == self.VERIFIED]
         ext_verified = [k for k, r in self.results.items() if r["status"] == self.EXT_VERIFIED]
-        url_verified = [k for k, r in self.results.items() if r["status"] == self.URL_VERIFIED]
         suspicious = [k for k, r in self.results.items() if r["status"] == self.SUSPICIOUS]
-        unverified = [k for k, r in self.results.items() if r["status"] == self.UNVERIFIED]
+        # Treat the retired URL_VERIFIED status as unverified if an old caller
+        # injects it; URL reachability is never identity evidence.
+        unverified = [
+            k for k, r in self.results.items()
+            if r["status"] in (self.UNVERIFIED, self.URL_VERIFIED)
+        ]
+        url_present_count = sum(
+            1 for r in self.results.values() if r.get("url_present")
+        )
         self.suspicious_count = len(suspicious)
 
         # Count by source for ext-verified
@@ -1278,12 +1332,13 @@ class BibtexCitationVerifier:
 
         total = len(self.results)
         self._out(f"  Total .bib entries   : {total}")
-        self._out(f"  DOI verified         : {len(verified)}")
-        self._out(f"  Crossref verified    : {cr_count}")
-        self._out(f"  S2 verified          : {s2_count}")
-        self._out(f"  URL verified         : {len(url_verified)}")
+        self._out(f"  DOI metadata match   : {len(verified)}")
+        self._out(f"  Crossref metadata    : {cr_count}")
+        self._out(f"  S2 metadata          : {s2_count}")
+        self._out(f"  URL present (info)   : {url_present_count}")
         self._out(f"  Suspicious           : {len(suspicious)}")
         self._out(f"  Unverified           : {len(unverified)}")
+        self._out(f"  .tex read errors     : {len(self.scan_errors)}")
         self._out(f"  Missing from .bib    : {len(self.missing_keys)}")
         self._out(f"  Orphan .bib entries  : {len(self.orphan_keys)}")
         self._out()
@@ -1304,7 +1359,9 @@ class BibtexCitationVerifier:
             for k in unverified:
                 r = self.results[k]
                 issues = r["issues"]
-                self._out(f"  {k}: {issues[0] if issues else 'no DOI or URL'}")
+                self._out(
+                    f"  {k}: {issues[0] if issues else 'no agreeing DOI/Crossref/S2 metadata'}"
+                )
             self._out()
 
         # Detail missing keys
@@ -1331,6 +1388,13 @@ class BibtexCitationVerifier:
             reasons.append(f"{len(self.missing_keys)} citation key(s) missing from .bib")
             failed = True
 
+        if self.scan_errors:
+            reasons.append(
+                f"{len(self.scan_errors)} .tex file(s) could not be read; "
+                "citation scan is incomplete"
+            )
+            failed = True
+
         if suspicious:
             reasons.append(f"{len(suspicious)} suspicious entry/entries detected")
             if self.strict:
@@ -1340,7 +1404,7 @@ class BibtexCitationVerifier:
             reasons.append(f"{len(unverified)} unverified entry/entries (strict mode)")
             failed = True
 
-        total_ok = len(verified) + len(ext_verified) + len(url_verified)
+        total_ok = len(verified) + len(ext_verified)
         if total > 0 and total_ok / total < 0.5 and not self.strict:
             reasons.append(f"Less than 50% of entries verified ({total_ok}/{total})")
             # Warning, but not a hard fail in non-strict mode
@@ -1355,7 +1419,10 @@ class BibtexCitationVerifier:
                 self._out(f"  - {r}")
         else:
             self._out("RESULT: PASSED")
-            self._out(f"  {total_ok}/{total} entries independently verified")
+            self._out(
+                f"  {total_ok}/{total} entries verified by bibliographic "
+                "metadata agreement"
+            )
 
         self._separator()
         self._out()
@@ -1405,8 +1472,9 @@ Checks performed:
   - Parse .bib and extract all entries
   - Scan .tex files for \\cite{} commands
   - Cross-check: missing keys, orphan entries
-  - DOI resolution and metadata matching (title similarity, year)
-  - URL accessibility (HEAD request)
+  - DOI metadata agreement (title, authors, year, venue)
+  - Crossref / Semantic Scholar metadata agreement when DOI proof is unavailable
+  - Report URL presence without fetching arbitrary BibTeX URLs
   - Hallucination pattern detection (generic titles, future years,
     anachronistic terms, missing fields, unverifiable entries)
 
