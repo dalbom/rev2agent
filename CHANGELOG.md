@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-07-10]
+
+### Added
+- Prompt-invariant regression tests covering round identity, seed-scoped experiment artifacts, review re-entry, result metadata, credential handling, and external-model consent
+- Per-metric seed and source-file provenance in aggregated experiment results
+
+### Changed
+- Experiment results now require canonical `sha256:<digest>` configuration fingerprints, complete `_meta` provenance, distinct seed identities, and at least two contributing seeds per aggregated metric
+- Phase 8 experiment requests now re-enter Phase 6 through an explicit persisted `review_reentry` state while preserving the completed round identity
+- External code review defaults to a host-native reviewer; configured external verification models are used only after explicit opt-in and environment-variable credential checks
+- External research-content disclosure is limited to the explicit `major revision` workflow
+
+### Fixed
+- Prevented incompatible experiment configurations, duplicate seed results, aggregate artifacts, malformed metrics, and non-finite derived statistics from being silently combined into manuscript-facing claims
+- Hardened citation verification against incomplete or conflicting DOI, Crossref, and Semantic Scholar metadata; malformed API responses and unreadable citation files now fail closed
+- Preserved round short names and seed-scoped checkpoint, marker, log, and result identities across iterative experiment routing
+
+### Security
+- Provider credentials are now referenced by environment-variable name instead of being requested or stored as plaintext; legacy plaintext configuration requires sanitization and key rotation
+- External source-code disclosure now requires the exact configured verification role, an explicit boolean consent flag, and the referenced credential environment variable
+
 ## [2026-06-09]
 
 ### Added
