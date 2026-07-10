@@ -11,6 +11,9 @@
 !/.github/
 !/docs/
 
+# Local agent-improvement design and implementation notes
+/docs/plans/
+
 # LaTeX compiler binary (users download it to the repo root)
 /tectonic
 
