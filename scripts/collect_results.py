@@ -19,7 +19,6 @@ Requires only Python 3.10+ stdlib (no external dependencies).
 
 import sys
 import argparse
-import fnmatch
 import json
 import math
 import os
@@ -49,16 +48,15 @@ def find_result_files(
     """
     Find all JSON candidate paths under results_dir.
 
-    Skips this script's own output (comparison_table*.json) so re-runs do
-    not re-ingest the generated table. Validation happens later so empty,
-    unreadable, broken, and non-file candidates are counted and reported.
+    Excludes only explicitly configured output paths. Content validation
+    happens later so empty, unreadable, broken, non-file, and output-shaped
+    candidates are counted and reported rather than hidden by their names.
     """
     excluded = {Path(os.path.abspath(path)) for path in (excluded_paths or [])}
     json_files = sorted(results_dir.rglob("*.json"))
     return [
         path for path in json_files
-        if not fnmatch.fnmatch(path.name, "comparison_table*.json")
-        and Path(os.path.abspath(path)) not in excluded
+        if Path(os.path.abspath(path)) not in excluded
     ]
 
 
@@ -232,6 +230,13 @@ def find_non_finite_number(value: Any, path: str = "$") -> Optional[str]:
     return None
 
 
+def is_finite_derived_number(value: Any) -> bool:
+    """Return whether an aggregate statistic is safe to serialize as JSON."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
+
+
 def aggregate_seeds(
     entries: List[Dict[str, Any]],
     warnings: Optional[List[str]] = None,
@@ -290,18 +295,56 @@ def aggregate_seeds(
         if len(seeds) < 2:
             continue
 
-        metric_vals: Dict[str, List[float]] = {}
+        metric_observations: Dict[str, List[Tuple[int, float, str]]] = {}
         for e in items:
             for k, v in e["metrics"].items():
-                metric_vals.setdefault(k, []).append(v)
+                metric_observations.setdefault(k, []).append(
+                    (e["seed"], v, e["file"])
+                )
 
         metrics: Dict[str, Dict[str, Any]] = {}
-        for k, vals in sorted(metric_vals.items()):
+        for k, observations in sorted(metric_observations.items()):
+            metric_seeds = sorted({seed for seed, _, _ in observations})
+            if len(metric_seeds) < 2:
+                warnings.append(
+                    f"Metric {k!r} for experiment_id={experiment_id!r}, "
+                    f"config_fingerprint={config_fingerprint!r}, "
+                    f"method={method!r}, group={group!r} has fewer than two "
+                    f"seeds ({metric_seeds}); metric omitted"
+                )
+                continue
+
+            vals = [value for _, value, _ in observations]
+            try:
+                mean = statistics.mean(vals)
+                std = statistics.stdev(vals)
+            except (OverflowError, ValueError, statistics.StatisticsError) as error:
+                warnings.append(
+                    f"Aggregate overflow or invalid derived statistic for metric "
+                    f"{k!r}, experiment_id={experiment_id!r}, "
+                    f"config_fingerprint={config_fingerprint!r}: {error}; "
+                    "metric omitted"
+                )
+                continue
+
+            if not is_finite_derived_number(mean) or not is_finite_derived_number(std):
+                warnings.append(
+                    f"Non-finite derived statistic for metric {k!r}, "
+                    f"experiment_id={experiment_id!r}, "
+                    f"config_fingerprint={config_fingerprint!r}; metric omitted"
+                )
+                continue
+
             metrics[k] = {
-                "mean": sum(vals) / len(vals),
-                "std": statistics.stdev(vals) if len(vals) > 1 else 0.0,
-                "n": len(vals),
+                "mean": mean,
+                "std": std,
+                "n": len(metric_seeds),
+                "seeds": metric_seeds,
+                "files": sorted({file for _, _, file in observations}),
             }
+
+        if not metrics:
+            continue
 
         aggregates.append({
             "round": rnd,
@@ -328,7 +371,7 @@ def collect_results(
     Returns:
         {
             "results_dir": str,
-            "files_scanned": int,       # candidates excluding configured/reserved outputs
+            "files_scanned": int,       # candidates excluding configured outputs
             "files_with_metrics": int,   # distinct files that yielded entries
             "entries_extracted": int,    # total entry rows extracted
             "entries": [
@@ -345,7 +388,7 @@ def collect_results(
             "aggregates": [  # mean/std within one experiment/configuration
                 {"round", "experiment_id", "config_fingerprint", "method",
                  "group", "n_seeds", "seeds", "files",
-                 "metrics": {key: {"mean", "std", "n"}}}
+                 "metrics": {key: {"mean", "std", "n", "seeds", "files"}}}
             ],
             "warnings": [str]
         }
@@ -623,16 +666,15 @@ def format_markdown(collected: Dict[str, Any]) -> str:
                 f"n_seeds={agg['n_seeds']}, seeds={agg['seeds']})"
             )
             lines.append("")
-            lines.append("| Metric | mean | std | n |")
-            lines.append("|--------|------|-----|---|")
+            lines.append("| Metric | mean | std | n | seeds | sources |")
+            lines.append("|--------|------|-----|---|-------|---------|")
             for k, sk in zip(mk_sorted, short_keys):
                 stats = agg["metrics"][k]
                 lines.append(
                     f"| {sk} | {stats['mean']:.4f} | {stats['std']:.4f} "
-                    f"| {stats['n']} |"
+                    f"| {stats['n']} | {stats['seeds']} | "
+                    f"{', '.join(stats['files'])} |"
                 )
-            lines.append("")
-            lines.append(f"Sources: {', '.join(agg['files'])}")
             lines.append("")
 
     return "\n".join(lines)
@@ -711,7 +753,12 @@ Output:
     if args.output_json:
         Path(args.output_json).parent.mkdir(parents=True, exist_ok=True)
         Path(args.output_json).write_text(
-            json.dumps(collected, indent=2, ensure_ascii=False) + "\n",
+            json.dumps(
+                collected,
+                indent=2,
+                ensure_ascii=False,
+                allow_nan=False,
+            ) + "\n",
             encoding="utf-8",
         )
         print(f"JSON saved to: {args.output_json}", file=sys.stderr)

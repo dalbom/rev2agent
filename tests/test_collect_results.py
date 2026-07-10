@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import math
 import sys
 import tempfile
 import unittest
@@ -313,6 +314,89 @@ class TestSeedAggregation(unittest.TestCase):
                 collected["warnings"],
             )
 
+    def test_large_finite_metrics_do_not_overflow_aggregate_mean(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            for seed in (0, 1):
+                write_json(
+                    tdir / f"seed{seed}.json",
+                    {"_meta": complete_meta(seed=seed), "score": 1e308},
+                )
+
+            collected = cr.collect_results(tdir)
+            self.assertEqual(collected["warnings"], [])
+            self.assertEqual(len(collected["aggregates"]), 1)
+            score = collected["aggregates"][0]["metrics"]["score"]
+            self.assertTrue(math.isfinite(score["mean"]))
+            self.assertEqual(score["mean"], 1e308)
+            json.dumps(collected, allow_nan=False)
+
+    def test_derived_statistic_overflow_warns_and_suppresses_aggregate(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            for seed, score in ((0, 1.3e308), (1, -1.3e308)):
+                write_json(
+                    tdir / f"seed{seed}.json",
+                    {"_meta": complete_meta(seed=seed), "score": score},
+                )
+
+            collected = cr.collect_results(tdir)
+            self.assertEqual(collected["aggregates"], [])
+            self.assertTrue(
+                any("overflow" in warning.lower() for warning in collected["warnings"]),
+                collected["warnings"],
+            )
+
+    def test_each_aggregate_metric_requires_two_contributing_seeds(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            write_json(
+                tdir / "seed0.json",
+                {"_meta": complete_meta(seed=0), "accuracy": 0.8},
+            )
+            write_json(
+                tdir / "seed1.json",
+                {"_meta": complete_meta(seed=1), "loss": 0.2},
+            )
+
+            collected = cr.collect_results(tdir)
+            self.assertEqual(collected["aggregates"], [])
+            self.assertEqual(len(collected["warnings"]), 2)
+            self.assertTrue(
+                all("fewer than two seeds" in warning for warning in collected["warnings"]),
+                collected["warnings"],
+            )
+
+    def test_aggregate_metric_records_exact_seed_and_file_provenance(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            write_json(
+                tdir / "seed0.json",
+                {"_meta": complete_meta(seed=0), "accuracy": 0.8, "loss": 0.3},
+            )
+            write_json(
+                tdir / "seed1.json",
+                {"_meta": complete_meta(seed=1), "loss": 0.2},
+            )
+            write_json(
+                tdir / "seed2.json",
+                {"_meta": complete_meta(seed=2), "accuracy": 1.0},
+            )
+
+            collected = cr.collect_results(tdir)
+            self.assertEqual(collected["warnings"], [])
+            aggregate = collected["aggregates"][0]
+            self.assertEqual(aggregate["metrics"]["accuracy"]["seeds"], [0, 2])
+            self.assertEqual(
+                aggregate["metrics"]["accuracy"]["files"],
+                ["seed0.json", "seed2.json"],
+            )
+            self.assertEqual(aggregate["metrics"]["loss"]["seeds"], [0, 1])
+            self.assertEqual(
+                aggregate["metrics"]["loss"]["files"],
+                ["seed0.json", "seed1.json"],
+            )
+
     def test_aggregate_input_is_an_entry_but_not_a_seed_source(self):
         with tempfile.TemporaryDirectory() as td:
             tdir = Path(td)
@@ -446,6 +530,33 @@ class TestCountsAndFlags(unittest.TestCase):
             self.assertEqual(exported["files_scanned"], 1)
             self.assertEqual(exported["warnings"], [])
 
+    def test_json_output_refuses_nonfinite_internal_data(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            output_path = tdir / "unsafe.json"
+            unsafe = {
+                "results_dir": str(tdir),
+                "files_scanned": 0,
+                "files_with_metrics": 0,
+                "entries_extracted": 0,
+                "entries": [],
+                "aggregates": [],
+                "warnings": [],
+                "unsafe_value": float("inf"),
+            }
+            argv = [
+                "collect_results.py",
+                str(tdir),
+                "--output-json",
+                str(output_path),
+            ]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(cr, "collect_results", return_value=unsafe), \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(ValueError):
+                    cr.main()
+
 
 class TestHappyPath(unittest.TestCase):
     def test_method_rows_and_markdown(self):
@@ -536,7 +647,7 @@ class TestMalformedInputs(unittest.TestCase):
             self.assertEqual(collected["entries"], [])
             self.assertEqual(collected["warnings"], [])
 
-    def test_reserved_outputs_are_not_scanned_but_renamed_output_is_reported(self):
+    def test_output_shaped_candidates_are_scanned_and_reported(self):
         with tempfile.TemporaryDirectory() as td:
             tdir = Path(td)
             write_json(tdir / "valid.json", RESULT_A)
@@ -545,12 +656,30 @@ class TestMalformedInputs(unittest.TestCase):
             write_json(tdir / "renamed.json", first)
 
             collected = cr.collect_results(tdir)
-            self.assertEqual(collected["files_scanned"], 2)
+            self.assertEqual(collected["files_scanned"], 3)
             self.assertEqual({entry["file"] for entry in collected["entries"]}, {"valid.json"})
-            self.assertTrue(
-                any("collect_results.py output" in warning for warning in collected["warnings"]),
-                collected["warnings"],
+            self.assertEqual(
+                sum(
+                    "collect_results.py output" in warning
+                    for warning in collected["warnings"]
+                ),
+                2,
             )
+
+    def test_comparison_table_prefix_cannot_hide_valid_or_malformed_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            write_json(tdir / "comparison_table_run.json", RESULT_A)
+            (tdir / "comparison_table_broken.json").write_text("", encoding="utf-8")
+
+            collected = cr.collect_results(tdir)
+            self.assertEqual(collected["files_scanned"], 2)
+            self.assertEqual(
+                {entry["file"] for entry in collected["entries"]},
+                {"comparison_table_run.json"},
+            )
+            self.assertEqual(len(collected["warnings"]), 1)
+            self.assertIn("comparison_table_broken.json", collected["warnings"][0])
 
 
 if __name__ == "__main__":

@@ -365,6 +365,12 @@ class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
         )
         self.assertIn("duplicate seeded identity", result_contract)
         self.assertIn("suppresses that aggregate", result_contract)
+        self.assertIn(
+            "Each aggregated metric requires at least two distinct contributing seeds",
+            result_contract,
+        )
+        self.assertIn("per-metric seed and file provenance", result_contract)
+        self.assertIn("derived statistic", result_contract)
         self.assertIn("--fail-on-warnings", result_contract)
 
     def test_failure_logs_use_seed_scoped_immutable_attempt_paths(self):

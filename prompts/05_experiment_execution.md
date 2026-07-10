@@ -168,6 +168,13 @@ do not choose one file or average the duplicate observations. Any such warning
 must stop the `--fail-on-warnings` gate until the duplicate provenance is
 resolved.
 
+Each aggregated metric requires at least two distinct contributing seeds; a
+group having two seeds is not enough when each metric occurs in only one of
+them. The aggregate records per-metric seed and file provenance. If computing a
+derived statistic overflows or produces a non-finite value, the collector warns
+and suppresses that metric (and suppresses the aggregate if no valid metrics
+remain). These warnings also stop the `--fail-on-warnings` gate.
+
 Additionally, maintain `{project_dir}/experiment/results/{round_dir}/INDEX.md` — a table mapping each result file to its round, script, key metric, and date:
 
 ```markdown
