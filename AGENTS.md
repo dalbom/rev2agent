@@ -63,12 +63,15 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`. If `_new_project_draft/` exists, an interview was interrupted — offer to resume it or discard the draft (see `prompts/01_interview.md`).
 2. **If no projects exist**: Begin at Phase 1 (Topic Interview).
 3. **If projects exist**: List them with a brief status summary and ask the user whether to resume one or start a new project.
-4. **If resuming**: Follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, read that project's `.research_state.json`, determine current phase and status, then:
-   - `not_started`: read that phase's prompt file and begin the phase.
-   - `in_progress`: check whether the process is still running; update state accordingly.
-   - `waiting_for_user`: re-present the summary and ask for confirmation.
-   - `completed`: advance to the next phase.
-   - `failed`: diagnose the failure and propose recovery options.
+4. **If resuming**: Read that project's `.research_state.json`. **Check `project_status` before dispatching on `phase_status`** and before creating a session lock:
+   - If `project_status` is `"completed"`, report final artifacts and do not advance.
+   - If `project_status` is `"archived"`, report that it is archived and do not mutate or advance.
+   - Only when `project_status` is `"active"`, follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, then determine the current phase and dispatch on `phase_status`:
+      - `not_started`: read that phase's prompt file and begin the phase.
+      - `in_progress`: check whether the process is still running; update state accordingly.
+      - `waiting_for_user`: re-present the summary and ask for confirmation.
+      - `completed`: advance to the next phase.
+      - `failed`: diagnose the failure and propose recovery options.
 5. **If starting new**: Begin at Phase 1.
 
 ## Phase Overview
@@ -116,13 +119,14 @@ Phase 4 (design) -> Phase 5 (execute) -> Phase 6 (analyze + plan next)
 
 **Phase 5 direct skip:** When Phase 6 determines that the next round requires NO design changes, it may route directly to Phase 5, skipping Phase 4. This is the only valid case for skipping Phase 4. The skip must be logged as a `phase4_skipped` event in `phase_history` (state-update details in `prompts/06_result_analysis.md`).
 
-**`sub_step` field:** When Phase 6 routes back to Phase 4, it sets `sub_step` to indicate the mode:
+**`sub_step` field:** Phase 6 uses `sub_step` to indicate its routing mode:
 - `null`: Normal experiment design for the next round
 - `"refinement"`: Evidence-driven refinement before designing experiments (see `prompts/04_experiment_design.md` "Refinement Mode")
+- `"review_reentry"`: Phase 6-only persisted marker for review-driven round planning after Phase 8
 
 `sub_step` is reset to `null` when Phase 5 begins. The trigger criteria for `"refinement"` (mandatory after Round 1, 10+pp metric deviation, positioning change, confound discovery, default-config change) are owned by `prompts/06_result_analysis.md` — see its "When to set `sub_step: \"refinement\"`" section.
 
-**Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6, which skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
+**Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6 with `sub_step: "review_reentry"`; Phase 6 skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
 
 ## State Management
 

@@ -6,6 +6,18 @@ Set up the environment, download data, write all experiment scripts, and launch 
 ## Mode
 **Task (subagents)** for parallel setup work, then **direct execution** for launching experiments.
 
+## Round Identity and Paths (MANDATORY)
+
+Before setup, resume checks, or execution, read `.research_state.json` and require `current_round > 0`. `current_round_short_name` must be nonempty before any execution work. If `current_round_short_name` is absent or empty, **STOP** and follow the legacy migration rule in `prompts/conventions.md`; do not execute experiments or guess a name.
+
+After validation, define this value once and pass it to every subagent and script:
+
+```text
+round_dir = round{current_round}_{current_round_short_name}
+```
+
+All artifacts that can signal or resume work are scoped by this identity: results under `{project_dir}/experiment/results/{round_dir}/`, checkpoints under `{project_dir}/experiment/checkpoints/{round_dir}/`, and PIDs/logs under `{project_dir}/experiment/logs/{round_dir}/`. Never use a marker, checkpoint, PID, or log from another round.
+
 ## Code Verification Protocol (MANDATORY)
 
 **Every experiment script MUST pass this 3-step verification before execution.** No exceptions. This protocol was established after a Round 5 incident where train features were matched against val images, producing silently invalid results that wasted hours of GPU time and led to incorrect conclusions.
@@ -80,19 +92,21 @@ A background Agent once zombified and repeatedly spawned rogue processes. Local 
 
    **Kill flag hygiene:** Before launching ANY experiment agent, check whether `{project_dir}/experiment/.kill_agent` already exists. If it does, confirm with the user and delete it first — a stale flag means every new agent immediately self-terminates. See `prompts/conventions.md` "Stale kill flag".
 
-2. **PID recording**: Two PID files are tracked under `{project_dir}/experiment/logs/`:
-   - `logs/run_all.pid` — written by the orchestrator launch command (`echo $! > logs/run_all.pid` in the nohup wrapper). Kills the whole `run_all.sh` loop.
-   - `logs/current_pid` — written by each individual Python script at startup so the currently-training process can be killed without taking down the orchestrator:
+2. **PID recording**: Two PID files are tracked under `{project_dir}/experiment/logs/{round_dir}/`:
+   - `experiment/logs/{round_dir}/run_all.pid` — written by the orchestrator launch command. Kills the whole `run_all.sh` loop.
+   - `experiment/logs/{round_dir}/current_pid` — written by each individual Python script at startup so the currently-training process can be killed without taking down the orchestrator:
      ```python
-     with open(LOGS_DIR / "current_pid", "w") as f:
+     with open(LOGS_DIR / round_dir / "current_pid", "w") as f:
          f.write(str(os.getpid()))
      ```
-   The user can kill either with `kill $(cat logs/run_all.pid)` or `kill $(cat logs/current_pid)`.
+   The user can kill either process with the matching round-scoped PID file. PID files are mutable coordination files; delete them after the recorded process exits.
+
+   **Immutable logs:** execution logs are never overwritten or reused. Write orchestrator output to `experiment/logs/{round_dir}/run_all_{timestamp}.log` and each attempt to `experiment/logs/{round_dir}/{exp_id}/attempt_{attempt}_{timestamp}.log`. Markers and `_meta.log_file` record the exact immutable log path.
 
 3. **Single-agent rule**: Only one experiment-running Agent at a time. Before spawning a new Agent, verify no existing experiment processes are alive via the PID files:
    ```bash
-   kill -0 $(cat {project_dir}/experiment/logs/run_all.pid) 2>/dev/null && echo "orchestrator still running"
-   kill -0 $(cat {project_dir}/experiment/logs/current_pid) 2>/dev/null && echo "training script still running"
+   kill -0 $(cat {project_dir}/experiment/logs/{round_dir}/run_all.pid) 2>/dev/null && echo "orchestrator still running"
+   kill -0 $(cat {project_dir}/experiment/logs/{round_dir}/current_pid) 2>/dev/null && echo "training script still running"
    ```
    If either check reports a live process, do NOT spawn a new experiment agent.
 
@@ -104,9 +118,11 @@ Every experiment script must include a `_meta` field in its output JSON:
 {
   "_meta": {
     "script": "scripts/run_gradient_inversion.py",
-    "log_file": "logs/gradient_inversion.log",
+    "log_file": "experiment/logs/round12_gradient_inversion/E01/attempt_1_20260405T143000Z.log",
     "timestamp": "2026-04-05T14:30:00",
-    "config": {"d": 512, "n_layers": 2, "seeds": [42, 123, 456]},
+    "resolved_config": {"d": 512, "n_layers": 2, "seed": 42},
+    "config_fingerprint": "sha256:...",
+    "seed": 42,
     "round": 12
   },
   ... actual results ...
@@ -115,7 +131,7 @@ Every experiment script must include a `_meta` field in its output JSON:
 
 This enables tracing from any result file back to its generating script, log, and configuration without manual grep.
 
-Additionally, maintain `{project_dir}/experiment/results/INDEX.md` — a table mapping each result file to its round, script, key metric, and date:
+Additionally, maintain `{project_dir}/experiment/results/{round_dir}/INDEX.md` — a table mapping each result file to its round, script, key metric, and date:
 
 ```markdown
 | File | Round | Script | Key Metric | Date |
@@ -126,6 +142,14 @@ Additionally, maintain `{project_dir}/experiment/results/INDEX.md` — a table m
 
 Update INDEX.md every time a new result file is created.
 
+## Checkpoint and Marker Configuration Contract (MANDATORY)
+
+Before launching each experiment, fully resolve defaults, inherited settings, dataset/split versions, and code revision into `resolved_config`. Compute `config_fingerprint` as SHA-256 over canonical JSON (UTF-8, keys sorted, stable separators) of the experiment configuration with only the per-run `seed` removed. Store the seed separately. This makes the fingerprint seed-independent for one experiment configuration while keeping seed identity explicit.
+
+Every checkpoint under `{project_dir}/experiment/checkpoints/{round_dir}/{exp_id}/` and every `COMPLETED`, `FAILED`, or `ALL_COMPLETE` marker under `{project_dir}/experiment/results/{round_dir}/` must be structured data containing `resolved_config`, `config_fingerprint`, seed or seed list, timestamp, and exact immutable log path. The round marker also records the expected experiment IDs and their fingerprints.
+
+Resume only when the stored `config_fingerprint` is an exact match for the newly resolved `config_fingerprint` and the checkpoint's recorded seed matches the requested seed. A `COMPLETED` marker may be used to skip a run only under the same checks. On any mismatch, refuse to resume or skip, preserve the old artifact, and report **config drift**; require a new experiment ID/path or explicit user resolution. Never silently overwrite a mismatched checkpoint or marker.
+
 ## Sub-tasks (via Task Subagents)
 
 ### Interface Contract (write BEFORE spawning any subagent)
@@ -134,8 +158,9 @@ The setup subagents work independently, so they must share a single interface de
 
 - **Experiment IDs** — the exact IDs from the Phase 4 experiment matrix (E01, E02, A01, ...).
 - **CLI argument contract** — the exact command-line interface for `train.py`, `evaluate.py`, and each baseline runner (argument names, types, defaults).
-- **Checkpoint path and format** — where checkpoints are saved and what each contains.
+- **Checkpoint path and format** — `{project_dir}/experiment/checkpoints/{round_dir}/{exp_id}/...`, including `resolved_config`, `config_fingerprint`, seed, training state, timestamp, and immutable log path.
 - **Result-file paths and `_meta` fields** — the result JSON locations per experiment and the required `_meta` schema (see "Experiment Result File Convention" above).
+- **Resume contract** — exact fingerprint and seed checks from "Checkpoint and Marker Configuration Contract" above.
 
 **Every task prompt below MUST include the contents (or path) of `interface.md`.** Subagents implement against the contract; they do not invent their own conventions.
 
@@ -161,7 +186,7 @@ Create a reproducible Python environment:
    - `python -c "import torch; print(torch.cuda.is_available())"`
    - Import all key packages.
 
-5. Write the result to {project_dir}/experiment/configs/env_setup.log
+5. Write the result to the immutable round-scoped log `{project_dir}/experiment/logs/{round_dir}/env_setup_{timestamp}.log`.
 
 IMPORTANT: Pin all package versions for reproducibility.
 ```
@@ -208,21 +233,23 @@ REQUIREMENTS:
    - torch.backends.cudnn.benchmark = False
 3. Checkpointing:
    - Save checkpoint every N epochs (configurable).
-   - Each checkpoint includes: model state, optimizer state, scheduler state, epoch, best metric, random states.
-   - On startup, check for existing checkpoints and RESUME automatically.
+   - Save under `{project_dir}/experiment/checkpoints/{round_dir}/{exp_id}/`.
+   - Each checkpoint includes: model state, optimizer state, scheduler state, epoch, best metric, random states, `resolved_config`, `config_fingerprint`, seed, timestamp, and immutable log path.
+   - On startup, resume only after the exact fingerprint and seed checks in "Checkpoint and Marker Configuration Contract" pass. Refuse mismatched artifacts as config drift.
    - Save "best" checkpoint based on validation metric.
 4. Logging:
    - TensorBoard logging: loss curves, learning rate, validation metrics per epoch.
-   - CSV logging as backup: {project_dir}/experiment/results/{exp_id}/metrics.csv
+   - CSV logging as backup: {project_dir}/experiment/results/{round_dir}/{exp_id}/metrics.csv
    - Console logging with timestamps.
+   - Immutable execution log: {project_dir}/experiment/logs/{round_dir}/{exp_id}/attempt_{attempt}_{timestamp}.log
 5. Validation:
    - Run validation every N epochs.
    - Compute all target metrics on the validation set.
    - Early stopping if configured.
 6. Completion signal:
-   - On completion, write a file: {project_dir}/experiment/results/{exp_id}/COMPLETED
-   - Include: final metrics, total training time, timestamp.
-   - On failure, write: {project_dir}/experiment/results/{exp_id}/FAILED with error traceback.
+   - On completion, write structured data to: {project_dir}/experiment/results/{round_dir}/{exp_id}/COMPLETED
+   - Include: final metrics, total training time, timestamp, `resolved_config`, `config_fingerprint`, seed, and immutable log path.
+   - On failure, write structured data to: {project_dir}/experiment/results/{round_dir}/{exp_id}/FAILED with error traceback and the same configuration/provenance fields.
 7. Mixed precision:
    - Support torch.amp if GPU supports it, for speed.
 8. Data loading:
@@ -238,7 +265,7 @@ REQUIREMENTS:
 1. Load a trained model checkpoint.
 2. Run inference on the test set.
 3. Compute all target metrics.
-4. Save results to {project_dir}/experiment/results/{exp_id}/eval_results.json
+4. Save results to {project_dir}/experiment/results/{round_dir}/{exp_id}/eval_results.json
    - Every result JSON MUST include a `_meta` field — see "Experiment Result File Convention" at the top of this prompt for the exact schema.
 5. Generate per-sample results if needed for qualitative analysis.
 6. Statistical analysis:
@@ -277,11 +304,12 @@ invent argument names.
 REQUIREMENTS:
 1. Run ALL experiments sequentially (or in parallel if multiple GPUs).
 2. For each experiment:
-   a. Check if already completed (COMPLETED file exists) → skip.
-   b. Check if partially done (checkpoint exists) → resume.
+   a. Check if its round-scoped `COMPLETED` marker exists and its fingerprint/seed match exactly → skip.
+   b. Check if a round-scoped checkpoint exists and its fingerprint/seed match exactly → resume.
    c. If not started → start fresh.
+   d. If either artifact exists but does not match → report config drift and refuse to reuse it.
 3. After each experiment completes, log the result.
-4. After ALL experiments complete, write: {project_dir}/experiment/ALL_COMPLETE
+4. After ALL experiments complete, write structured data to: {project_dir}/experiment/results/{round_dir}/ALL_COMPLETE. Include the expected experiment IDs, their `resolved_config` values and `config_fingerprint` values, seeds, completion timestamps, and exact immutable log paths.
 5. Handle failures gracefully:
    - If an experiment fails, log the error and continue with the next one.
    - Write a summary of which experiments succeeded/failed.
@@ -300,12 +328,12 @@ Set up experiment monitoring:
 
 1. TensorBoard:
    - Write a launch script: {project_dir}/experiment/scripts/start_tensorboard.sh
-   - Command: tensorboard --logdir {project_dir}/experiment/results/ --port 6006
+   - Command: tensorboard --logdir {project_dir}/experiment/results/{round_dir}/ --port 6006
    - Include instructions for SSH port forwarding if remote.
 
 2. Status dashboard (Streamlit or simple script):
    - Write {project_dir}/experiment/scripts/status.py that shows:
-     - Which experiments are completed/running/pending.
+     - Which experiments in `{round_dir}` are completed/running/pending, based only on round-scoped markers whose fingerprints match the expected configs.
      - Current epoch and metrics for running experiments.
      - Estimated time remaining.
    - Can be run as: python status.py
@@ -341,9 +369,10 @@ Scripts:
 To start experiments:
   $ conda activate research-{project_dir}  # or micromamba
   $ cd {project_dir}/experiment
-  $ mkdir -p logs
-  $ nohup bash scripts/run_all.sh > logs/run.log 2>&1 &
-  $ echo $! > logs/run_all.pid
+  $ RUN_TS=$(date -u +%Y%m%dT%H%M%SZ)
+  $ mkdir -p logs/{round_dir}
+  $ ROUND_DIR={round_dir} nohup bash scripts/run_all.sh > logs/{round_dir}/run_all_${RUN_TS}.log 2>&1 &
+  $ echo $! > logs/{round_dir}/run_all.pid
 
 To monitor:
   $ bash scripts/start_tensorboard.sh
@@ -357,9 +386,10 @@ Estimated total time: [X] hours on [GPU name]
 5. If confirmed, start the experiments:
    ```bash
    cd {project_dir}/experiment
-   mkdir -p logs
-   nohup bash scripts/run_all.sh > logs/run.log 2>&1 &
-   echo $! > logs/run_all.pid
+   RUN_TS=$(date -u +%Y%m%dT%H%M%SZ)
+   mkdir -p logs/{round_dir}
+   ROUND_DIR={round_dir} nohup bash scripts/run_all.sh > logs/{round_dir}/run_all_${RUN_TS}.log 2>&1 &
+   echo $! > logs/{round_dir}/run_all.pid
    ```
 
 6. Inform the user:
@@ -370,11 +400,11 @@ Estimated total time: [X] hours on [GPU name]
    When you come back, start a new session in this directory and ask me to continue this project.
 
    Quick commands while I'm away:
-     $ tail -f {project_dir}/experiment/logs/run.log        # watch live output
+     $ tail -f {project_dir}/experiment/logs/{round_dir}/run_all_{timestamp}.log  # watch this launch's immutable log
      $ python {project_dir}/experiment/scripts/status.py    # check status
      $ bash {project_dir}/experiment/scripts/start_tensorboard.sh  # visualize
-     $ kill $(cat {project_dir}/experiment/logs/run_all.pid)       # stop orchestrator
-     $ kill $(cat {project_dir}/experiment/logs/current_pid)       # stop current script
+     $ kill $(cat {project_dir}/experiment/logs/{round_dir}/run_all.pid)  # stop orchestrator
+     $ kill $(cat {project_dir}/experiment/logs/{round_dir}/current_pid)  # stop current script
    ```
 
 ## State Update
@@ -383,11 +413,12 @@ When experiments are launched:
 - `current_phase`: `5`
 - `sub_step`: `null` — **always reset when Phase 5 begins**, regardless of whether the round arrived via normal design, refinement, or a Phase 4 skip
 - `current_round`: unchanged
+- `current_round_short_name`: unchanged and nonempty
 - `phase_status`: `"in_progress"`
 - `project_status`: unchanged
 - `experiment.status`: `"running"`
 - `experiment.scripts_ready`: `true`
-- Record PID and experiment details in `experiment.active_runs`
+- Record the round-scoped PID path, exact immutable log path, `round_dir`, experiment ID, seed, and `config_fingerprint` in `experiment.active_runs`
 - **Update roadmap:** Add the current round to the Active section with objective and expected duration. If `{project_dir}/research_roadmap.md` does not exist yet (Round 1), create it using the skeleton in `prompts/06_result_analysis.md` "Roadmap File Format" before registering the round.
 - Append to `phase_history`
 
@@ -398,19 +429,19 @@ Before transitioning to Phase 6:
 2. Set `phase_status` to `"not_started"`
 3. Set `experiment.status` to `"completed"`
 4. Update `experiment.active_runs` — set status to `"completed"`
-5. **Create the round subfolder** if it doesn't exist: `{project_dir}/summaries/round{current_round}_{short_name}/`
+5. **Create the round subfolder** if it doesn't exist: `{project_dir}/summaries/{round_dir}/`
 6. **Write `phase5_experiment_log.md`** in the round subfolder. Contents: which experiments ran, which seeds, duration, any failures, environment details.
-7. **Update `results/INDEX.md`** and verify every new JSON has a `_meta` field — per "Experiment Result File Convention" above.
+7. **Update `experiment/results/{round_dir}/INDEX.md`** and verify every new JSON has a `_meta` field — per "Experiment Result File Convention" above.
 
 ## Session Resumption Logic
 
 When the user returns and this phase is active:
 
 1. Check if the experiment process is still running. Two PID files may exist (see "Subagent Safety Protocol" above):
-   - `logs/run_all.pid` — orchestrator (bash `run_all.sh`)
-   - `logs/current_pid` — individual Python script currently training
+   - `experiment/logs/{round_dir}/run_all.pid` — orchestrator (bash `run_all.sh`)
+   - `experiment/logs/{round_dir}/current_pid` — individual Python script currently training
    ```bash
-   for PIDFILE in {project_dir}/experiment/logs/run_all.pid {project_dir}/experiment/logs/current_pid; do
+   for PIDFILE in {project_dir}/experiment/logs/{round_dir}/run_all.pid {project_dir}/experiment/logs/{round_dir}/current_pid; do
        PID=$(cat "$PIDFILE" 2>/dev/null)
        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
            echo "$PIDFILE: still running (PID $PID)"
@@ -420,16 +451,20 @@ When the user returns and this phase is active:
 
 2. Check for completion:
    ```bash
-   if [ -f {project_dir}/experiment/ALL_COMPLETE ]; then
+   if [ -f {project_dir}/experiment/results/{round_dir}/ALL_COMPLETE ]; then
        echo "All experiments completed!"
    fi
    ```
 
+   Parse the marker and accept it only if its expected experiment IDs, fingerprints, and seeds exactly match the current round plan. Otherwise report config drift and do not advance.
+
 3. Check for partial completion:
    ```bash
-   ls {project_dir}/experiment/results/*/COMPLETED 2>/dev/null | wc -l
-   ls {project_dir}/experiment/results/*/FAILED 2>/dev/null | wc -l
+   ls {project_dir}/experiment/results/{round_dir}/*/COMPLETED 2>/dev/null | wc -l
+   ls {project_dir}/experiment/results/{round_dir}/*/FAILED 2>/dev/null | wc -l
    ```
+
+   Count a marker only after its fingerprint and seed match the expected run. Preserve and report mismatched markers as config drift.
 
 4. Report status and propose next action:
    - All complete → Proceed to Phase 6

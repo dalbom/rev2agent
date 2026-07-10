@@ -6,8 +6,16 @@ Analyze experiment results, generate tables and figures, perform statistical tes
 ## Mode
 **Direct + Task subagents** for parallel analysis tasks.
 
+## Entry Routing (check before prerequisites)
+
+Read `.research_state.json` before doing any analysis. If `sub_step == "review_reentry"`, the persisted marker proves this is review-driven planning from Phase 8: preserve the existing `current_round` and `current_round_short_name`, skip the prerequisites and steps 6.1–6.8, and go directly to Round Planning with `{project_dir}/manuscript/review_synthesis.md` as an input. Do not infer re-entry from conversation history.
+
+Keep `sub_step: "review_reentry"` while presenting options. When `review_reentry` is active, clear or change `sub_step` before leaving re-entry planning through any State Update route below; never leave the marker set after routing to Phase 3, 4, 5, or 7.
+
+For normal analysis, require a nonempty `current_round_short_name` and define `round_dir = round{current_round}_{current_round_short_name}` once. Use that value for every current-round path below.
+
 ## Prerequisites
-- All (or most) experiments completed (check `{project_dir}/experiment/results/*/COMPLETED`).
+- All (or most) experiments completed (check `{project_dir}/experiment/results/{round_dir}/*/COMPLETED`).
 - If some experiments failed, note which ones and whether re-running is needed.
 - **`phase5_experiment_log.md` must exist** in the current round's summary directory. If it does not, write it before proceeding with analysis.
 
@@ -20,10 +28,10 @@ Analyze experiment results, generate tables and figures, perform statistical tes
 Run the automated collection script FIRST:
 
 ```bash
-python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+python3 scripts/collect_results.py {project_dir}/experiment/results/{round_dir}/ \
     --fail-on-warnings \
-    --output-md {project_dir}/experiment/results/comparison_table.md \
-    --output-json {project_dir}/experiment/results/comparison_table.json
+    --output-md {project_dir}/experiment/results/{round_dir}/comparison_table.md \
+    --output-json {project_dir}/experiment/results/{round_dir}/comparison_table.json
 ```
 
 Then read `comparison_table.md` and use it as the **sole source** for all numerical claims in this phase. If a number does not appear in the generated table, it does not exist — do not cite metrics from memory or from a quick glance at a JSON file.
@@ -32,11 +40,11 @@ Then read `comparison_table.md` and use it as the **sole source** for all numeri
 
 To focus on specific metrics, use `--metric-keys`:
 ```bash
-python3 scripts/collect_results.py {project_dir}/experiment/results/ \
+python3 scripts/collect_results.py {project_dir}/experiment/results/{round_dir}/ \
     --fail-on-warnings \
     --metric-keys cls_auc,recon_ssim,verif_auc \
-    --output-md {project_dir}/experiment/results/comparison_table.md \
-    --output-json {project_dir}/experiment/results/comparison_table.json
+    --output-md {project_dir}/experiment/results/{round_dir}/comparison_table.md \
+    --output-json {project_dir}/experiment/results/{round_dir}/comparison_table.json
 ```
 
 ### 6.2 Main Results Table
@@ -84,12 +92,12 @@ For each pair of methods being compared:
 2. Report p-values.
 3. Mark statistically significant improvements (p < 0.05).
 4. Compute effect size (Cohen's d).
-5. Save results to {project_dir}/experiment/results/statistical_tests.json
+5. Save results to {project_dir}/experiment/results/{round_dir}/statistical_tests.json
 ```
 
-**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/` — must include a `_meta` field per the Result File Convention in `prompts/05_experiment_execution.md` (script, log file, timestamp, config, round). Without it, the next round's `collect_results.py --fail-on-warnings` gate fails on these files.
+**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/{round_dir}/` — must include a `_meta` field per the Result File Convention in `prompts/05_experiment_execution.md` (script, log file, timestamp, config, round). Without it, the current round's `collect_results.py --fail-on-warnings` gate fails on these files.
 
-After generating statistical test results, update `{project_dir}/experiment/results/INDEX.md` with any new result files created during analysis.
+After generating statistical test results, update `{project_dir}/experiment/results/{round_dir}/INDEX.md` with any new result files created during analysis.
 
 ### 6.5 Figure Generation (via Task subagent)
 
@@ -154,7 +162,7 @@ This section handles planning the next experiment round by consulting the persis
 
 This section triggers after the analysis steps above (6.1–6.8) when the user is deciding what to do next. It also triggers after Phase 7 feedback when the user decides to run another experiment round. It does NOT trigger if the user is proceeding directly to final manuscript submission with no further experiments planned.
 
-**Phase 8 re-entry mode:** If entering Phase 6 from Phase 8 (review-driven experiments), the previous round is already closed — skip steps 6.1–6.8 and go directly to Round Planning, seeding candidate directions from `{project_dir}/manuscript/review_synthesis.md`. Increment `current_round` when the new round is confirmed, as usual.
+**Phase 8 re-entry mode:** The Entry Routing rule above is authoritative. `sub_step == "review_reentry"` means the previous round is already closed; its identity remains unchanged until the user confirms a State Update route for the next work.
 
 ### 6.9 Read the Roadmap
 
@@ -179,7 +187,7 @@ Before presenting options, update the roadmap to reflect what was just learned:
    - If results make a direction irrelevant (e.g., a feature it depended on turned out to be uninformative), move it down or to Abandoned (see step 4).
 3. **Add new directions discovered during the round.** Analysis, Grad-CAM, error analysis, or feedback often suggest new ideas. Add them to the appropriate priority tier with rationale and source.
 4. **Check for abandonment candidates.** Explicitly ask: "Did this round's evidence render any Active or Pending direction unviable?" For each such direction, move it to Abandoned with a reason from the enum:
-   - `falsified` — experiment disproved the hypothesis. **Evidence field is mandatory and must be a concrete path** (e.g., `experiment/results/roundN_something.json` or `summaries/roundN_*/phase6_results.md`).
+   - `falsified` — experiment disproved the hypothesis. **Evidence field is mandatory and must be a concrete path** (e.g., `experiment/results/round{N}_{short_name}/{exp_id}/eval_results.json` or `summaries/roundN_*/phase6_results.md`).
    - `out_of_scope` — valid direction but outside the current project's scope.
    - `low_value` — **judgment** call: expected payoff no longer justifies the cost, given current results. Use this when the direction is *possible* but not *worth* pursuing.
    - `solved_elsewhere` — prior or concurrent work already addressed it.
@@ -332,7 +340,7 @@ A cross-round table tracking quantitative outcomes. Updated every round. Keeps a
 - **[RN] Direction Name** — one-line description
   - **Abandoned at:** Round N, Phase X
   - **Reason:** one of `falsified` | `out_of_scope` | `low_value` | `solved_elsewhere` | `infeasible`
-  - **Evidence:** for `falsified`, path to the result file that disproved it (e.g., `experiment/results/roundN_something.json`). For other reasons, 1-2 sentence rationale.
+  - **Evidence:** for `falsified`, path to the result file that disproved it (e.g., `experiment/results/round{N}_{short_name}/{exp_id}/eval_results.json`). For other reasons, 1-2 sentence rationale.
   - **Revisit trigger:** condition that would reopen this direction, or `none`
 ```
 
@@ -401,10 +409,10 @@ If results don't support the hypothesis, or if results are positive but could be
 ## Phase Summary
 
 After analysis and round planning are complete, write:
-- **File**: `{project_dir}/summaries/round{current_round}_{short_name}/phase6_results.md`
+- **File**: `{project_dir}/summaries/{round_dir}/phase6_results.md`
 - **Contents**: Main results table, ablation table, statistical test results, interpretation, paper viability assessment, round planning decision.
 
-- **File**: `{project_dir}/summaries/round{current_round}_{short_name}/round_summary.md`
+- **File**: `{project_dir}/summaries/{round_dir}/round_summary.md`
 - **Contents**: Objective, experiments run, results tables, key takeaway, files created.
 
 Both files must exist before proceeding to the next phase.
@@ -413,10 +421,13 @@ Both files must exist before proceeding to the next phase.
 
 After user confirms results AND picks next direction (or confirms manuscript):
 
+Round identity rules are route-specific: the Phase 4 route clears `current_round_short_name` to `""`; the direct Phase 5 route sets `current_round_short_name` to the short name confirmed during planning; Phase 7 and Phase 3 routes preserve `current_round_short_name` for the last completed round. These rules also clear or change `sub_step` when leaving `review_reentry` planning, as specified below.
+
 **If proceeding to another round (Phase 4):**
 - `current_phase`: `4`
 - `sub_step`: `null` (normal) or `"refinement"` (if reframing needed — see "When to set `sub_step: \"refinement\"`" above)
 - `current_round`: increment by 1
+- `current_round_short_name`: `""` — Phase 4 names and persists the newly confirmed round.
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - `experiment.status`: `"completed"`
@@ -429,6 +440,7 @@ After user confirms results AND picks next direction (or confirms manuscript):
 - `current_phase`: `5`
 - `sub_step`: `null`
 - `current_round`: increment by 1
+- `current_round_short_name`: the confirmed `short_name` assigned during this round-planning decision
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - `experiment.status`: `"completed"`
@@ -442,6 +454,7 @@ After user confirms results AND picks next direction (or confirms manuscript):
 - `current_phase`: `7`
 - `sub_step`: `null`
 - `current_round`: unchanged
+- `current_round_short_name`: unchanged
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - `experiment.status`: `"completed"`
@@ -454,6 +467,7 @@ After user confirms results AND picks next direction (or confirms manuscript):
 - `current_phase`: `3`
 - `sub_step`: `null`
 - `current_round`: unchanged — **round numbers are monotonic and NEVER reset** (see `prompts/conventions.md` "Round Numbering"); the new plan's first round continues the sequence
+- `current_round_short_name`: unchanged until Phase 3 confirms the new plan, increments the round, and clears it
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged
 - `experiment.status`: `"completed"`

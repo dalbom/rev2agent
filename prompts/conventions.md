@@ -12,6 +12,7 @@ The single source of truth for session resumption. Schema:
   "current_phase": 1,
   "sub_step": null,
   "current_round": 0,
+  "current_round_short_name": "",
   "phase_status": "in_progress",
   "project_status": "active",
   "created_at": "2026-02-12T10:00:00Z",
@@ -50,7 +51,7 @@ The single source of truth for session resumption. Schema:
 | `experiment.status` | `not_started` \| `running` \| `completed` \| `failed` |
 | `experiment.active_runs[].status` | `running` \| `completed` \| `failed` |
 | `manuscript.status` | `not_started` \| `in_progress` \| `draft_complete` \| `in_review` \| `final` |
-| `sub_step` | `null` \| `"refinement"` |
+| `sub_step` | `null` \| `"refinement"` \| `"review_reentry"` (Phase 6 only) |
 
 ## `phase_history` Entry Format
 
@@ -80,13 +81,18 @@ Every phase transition appends one entry. Fixed shape:
 4. **Session lock.** On resuming a project, write `{project_dir}/.session_lock` containing the current timestamp. If a lock newer than 4 hours already exists, warn the user that another session may be active on this project and ask before proceeding. Delete the lock when the session ends a phase cleanly (best effort — a stale lock is a warning, never a hard block).
 5. **Always** update the state file at every phase transition and significant checkpoint, and append to `phase_history` per the format above. Never advance phases without a state write.
 
+### Legacy round-identity migration
+
+Older state files may not contain `current_round_short_name`. When it is absent or empty for an existing active round (`current_round > 0`), infer it only if exactly one directory matches `{project_dir}/summaries/round{current_round}_*/`. Extract the suffix after `round{current_round}_` and validate it against the naming rules below. If zero or multiple directories match, **STOP and ask the user** to identify the active round rather than guessing. The MAIN agent must persist the confirmed or uniquely inferred `current_round_short_name` atomically before any round-specific work continues.
+
 ## Round Numbering (monotonic — never reset)
 
 - Round numbers are strictly sequential integers (1, 2, 3, ...). No gaps, no sub-round suffixes (no `8b`, `9b`).
 - **Round numbers NEVER reset**, including when Phase 6 routes back to Phase 3 for a new research plan. The new plan's first round continues the sequence (e.g., Round 6 after a plan change following Round 5). The plan boundary is recorded as a `new_research_plan` entry in `phase_history` and as a section break in `research_roadmap.md`.
 - If a round needs additional experiments, create a NEW round that references the previous one ("Extends Round 11 with additional seeds").
 - Directory name: `summaries/round{N}_{short_name}/` where `short_name` is 1–3 words in `snake_case`, no spaces or special characters.
-- **`short_name` ownership:** Phase 4 assigns it when the design is confirmed. For rounds that skip Phase 4 (identical-config direct-to-Phase-5), Phase 6 assigns it during round planning.
+- `current_round_short_name` stores the active round's `short_name`; together with `current_round` it is the persistent round identity used after session resumption.
+- **`short_name` ownership:** Phase 3 increments `current_round` and clears `current_round_short_name`. Phase 4 assigns and persists it when the design is confirmed. For rounds that skip Phase 4 (identical-config direct-to-Phase-5), Phase 6 assigns and persists it during round planning. Phase 8 review re-entry preserves the existing identity until Phase 6 confirms the next round.
 
 ## Summary Files & Phase Transition Checklist (MANDATORY)
 
@@ -108,7 +114,7 @@ After the user approves each phase's results, write a self-contained markdown su
 
 - **Never silently skip errors.** Always log them and inform the user.
 - **Experiment failure recovery:**
-  1. Save the error log to `{project_dir}/experiment/logs/`.
+  1. Save the error log to the current round's immutable log directory: `{project_dir}/experiment/logs/round{current_round}_{current_round_short_name}/`.
   2. Set the run's `experiment.active_runs[].status` to `"failed"`.
   3. Decision tree:
      - **Transient error** (OOM, timeout, network): retry up to 5x with the same config.
