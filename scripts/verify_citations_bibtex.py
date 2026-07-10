@@ -428,16 +428,21 @@ def venue_similarity(v1: str, v2: str) -> float:
 # ---------------------------------------------------------------------------
 
 def _best_title_match(
-    candidates: List[Dict], clean_title: str, title_key: str = "title"
+    candidates: List[Any], clean_title: str, title_key: str = "title"
 ) -> Tuple[Optional[Dict], float]:
     """Find the candidate with the highest title similarity. Returns (item, similarity)."""
     best_sim = 0.0
     best_item = None
     for item in candidates:
+        if not isinstance(item, dict):
+            continue
         raw = item.get(title_key, "")
-        # Crossref wraps title in a list
         if isinstance(raw, list):
-            raw = raw[0] if raw else ""
+            raw = raw[0] if raw and isinstance(raw[0], str) else ""
+        elif not isinstance(raw, str):
+            raw = ""
+        if not raw.strip():
+            continue
         sim = title_similarity(clean_title, raw)
         if sim > best_sim:
             best_sim = sim
@@ -445,12 +450,25 @@ def _best_title_match(
     return best_item, best_sim
 
 
+def _optional_metadata_string(value: Any) -> str:
+    """Normalize an optional string or one-element string list."""
+    if isinstance(value, str):
+        return value.strip()
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 1
+        and isinstance(value[0], str)
+    ):
+        return value[0].strip()
+    return ""
+
+
 CROSSREF_API_BASE = "https://api.crossref.org/works"
 
 
 def _http_get_json(url: str, headers: Optional[Dict[str, str]] = None,
                    retries: int = 3,
-                   errors: Optional[List[str]] = None) -> Optional[Dict]:
+                   errors: Optional[List[str]] = None) -> Optional[Any]:
     """
     Generic HTTP GET returning parsed JSON.
 
@@ -524,10 +542,14 @@ def search_crossref(title: str) -> Tuple[bool, Dict]:
     url = f"{CROSSREF_API_BASE}?{params}"
 
     data = _http_get_json(url)
-    if not data or "message" not in data:
-        return False, {"error": "no response from Crossref"}
-
-    items = data["message"].get("items", [])
+    if not isinstance(data, dict):
+        return False, {"error": "invalid Crossref response: expected object"}
+    message = data.get("message")
+    if not isinstance(message, dict):
+        return False, {"error": "invalid Crossref response: message is not an object"}
+    items = message.get("items")
+    if not isinstance(items, list):
+        return False, {"error": "invalid Crossref response: items is not a list"}
     if not items:
         return False, {"error": "no results from Crossref"}
 
@@ -537,33 +559,57 @@ def search_crossref(title: str) -> Tuple[bool, Dict]:
 
     # Extract authors
     authors = []
-    for a in best_item.get("author", []):
-        name = f"{a.get('given', '')} {a.get('family', '')}".strip()
-        if name:
-            authors.append(name)
+    raw_authors = best_item.get("author", [])
+    if isinstance(raw_authors, list):
+        for author in raw_authors:
+            if not isinstance(author, dict):
+                continue
+            given = author.get("given", "")
+            family = author.get("family", "")
+            given = given.strip() if isinstance(given, str) else ""
+            family = family.strip() if isinstance(family, str) else ""
+            name = f"{given} {family}".strip()
+            if name:
+                authors.append(name)
 
     # Extract year from published-print or published-online
     year = None
     for date_field in ("published-print", "published-online"):
-        date_parts = best_item.get(date_field, {}).get("date-parts", [[None]])
-        if date_parts and date_parts[0] and date_parts[0][0]:
+        date_value = best_item.get(date_field)
+        if not isinstance(date_value, dict):
+            continue
+        date_parts = date_value.get("date-parts")
+        if (
+            isinstance(date_parts, list)
+            and date_parts
+            and isinstance(date_parts[0], list)
+            and date_parts[0]
+        ):
             year = date_parts[0][0]
             break
 
     # Extract venue
-    containers = best_item.get("container-title", [])
-    venue = containers[0] if containers else ""
-
-    cr_titles = best_item.get("title", [])
-    return True, {
-        "title": cr_titles[0] if cr_titles else "",
+    venue = _optional_metadata_string(best_item.get("container-title", ""))
+    title_value = _optional_metadata_string(best_item.get("title", ""))
+    doi_value = best_item.get("DOI", "")
+    doi = doi_value.strip() if isinstance(doi_value, str) else ""
+    metadata = {
+        "title": title_value,
         "authors": authors,
         "year": year,
         "venue": venue,
-        "doi": best_item.get("DOI", ""),
+        "doi": doi,
         "source": "crossref",
         "title_similarity": best_sim,
     }
+    gaps = BibtexCitationVerifier._metadata_identity_gaps(metadata)
+    if gaps:
+        metadata["error"] = (
+            "incomplete Crossref metadata: missing or unusable "
+            + ", ".join(gaps)
+        )
+        return False, metadata
+    return True, metadata
 
 
 # ---------------------------------------------------------------------------
@@ -596,23 +642,49 @@ def search_semantic_scholar(
         headers["x-api-key"] = api_key
 
     data = _http_get_json(url, headers=headers)
-    if not data or not data.get("data"):
+    if not isinstance(data, dict):
+        return False, {"error": "invalid Semantic Scholar response: expected object"}
+    papers = data.get("data")
+    if not isinstance(papers, list):
+        return False, {"error": "invalid Semantic Scholar response: data is not a list"}
+    if not papers:
         return False, {"error": "no results from Semantic Scholar"}
 
-    best_paper, best_sim = _best_title_match(data["data"], clean)
+    best_paper, best_sim = _best_title_match(papers, clean)
     if best_paper is None or best_sim < 0.5:
         return False, {"error": f"no good title match (best similarity: {best_sim:.1%})"}
 
-    authors = [a.get("name", "") for a in best_paper.get("authors", [])]
-    return True, {
-        "title": best_paper.get("title", ""),
+    authors = []
+    raw_authors = best_paper.get("authors", [])
+    if isinstance(raw_authors, list):
+        for author in raw_authors:
+            if not isinstance(author, dict):
+                continue
+            name = author.get("name", "")
+            if isinstance(name, str) and name.strip():
+                authors.append(name.strip())
+    external_ids = best_paper.get("externalIds", {})
+    if not isinstance(external_ids, dict):
+        external_ids = {}
+    doi_value = external_ids.get("DOI", "")
+    doi = doi_value.strip() if isinstance(doi_value, str) else ""
+    metadata = {
+        "title": _optional_metadata_string(best_paper.get("title", "")),
         "authors": authors,
         "year": best_paper.get("year"),
-        "venue": best_paper.get("venue", ""),
-        "doi": best_paper.get("externalIds", {}).get("DOI", ""),
+        "venue": _optional_metadata_string(best_paper.get("venue", "")),
+        "doi": doi,
         "source": "s2",
         "title_similarity": best_sim,
     }
+    gaps = BibtexCitationVerifier._metadata_identity_gaps(metadata)
+    if gaps:
+        metadata["error"] = (
+            "incomplete Semantic Scholar metadata: missing or unusable "
+            + ", ".join(gaps)
+        )
+        return False, metadata
+    return True, metadata
 
 
 def search_external(title: str, enable_s2: bool = True,
@@ -1020,7 +1092,7 @@ class BibtexCitationVerifier:
             return None
         if isinstance(year, int):
             value = year
-        elif isinstance(year, str) and year.isdigit():
+        elif isinstance(year, str) and year.isascii() and year.isdigit():
             value = int(year)
         else:
             return None
@@ -1034,16 +1106,7 @@ class BibtexCitationVerifier:
     @staticmethod
     def _usable_metadata_venue(metadata: Dict) -> str:
         """Normalize an optional venue string; invalid shapes are inconclusive."""
-        venue = metadata.get("venue", "")
-        if isinstance(venue, str):
-            return venue.strip()
-        if (
-            isinstance(venue, (list, tuple))
-            and len(venue) == 1
-            and isinstance(venue[0], str)
-        ):
-            return venue[0].strip()
-        return ""
+        return _optional_metadata_string(metadata.get("venue", ""))
 
     @classmethod
     def _metadata_identity_gaps(cls, metadata: Dict) -> List[str]:

@@ -279,6 +279,131 @@ class TestHttpGetJsonRetry(unittest.TestCase):
         self.assertTrue(any("json" in e.lower() for e in errors), errors)
 
 
+class TestMetadataLookups(unittest.TestCase):
+    COMPLETE_CROSSREF = {
+        "message": {
+            "items": [{
+                "title": ["Identity Matters"],
+                "author": [{"given": "John", "family": "Smith"}],
+                "published-print": {"date-parts": [[2024]]},
+                "container-title": ["Journal of Testing"],
+                "DOI": "10.1234/identity",
+            }]
+        }
+    }
+    COMPLETE_S2 = {
+        "data": [{
+            "title": "Identity Matters",
+            "authors": [{"name": "John Smith"}],
+            "year": 2024,
+            "venue": "Journal of Testing",
+            "externalIds": {"DOI": "10.1234/identity"},
+        }]
+    }
+
+    def test_best_title_match_skips_invalid_candidates_and_title_shapes(self):
+        candidates = [
+            None,
+            "garbage",
+            {"title": 42},
+            {"title": [42]},
+            {"title": []},
+            {"title": ["Identity Matters"]},
+        ]
+        item, similarity = vcb._best_title_match(candidates, "Identity Matters")
+        self.assertEqual(item, {"title": ["Identity Matters"]})
+        self.assertEqual(similarity, 1.0)
+
+    def test_crossref_rejects_malformed_response_shapes_without_raising(self):
+        malformed = (
+            [],
+            "garbage",
+            {"message": []},
+            {"message": {"items": {}}},
+            {"message": {"items": [None, {"title": 42}]}},
+        )
+        for payload in malformed:
+            with self.subTest(payload=payload), mock.patch.object(
+                    vcb, "_http_get_json", return_value=payload):
+                found, meta = vcb.search_crossref("Identity Matters")
+            self.assertFalse(found)
+            self.assertIn("error", meta)
+
+    def test_crossref_rejects_incomplete_or_invalid_candidate_metadata(self):
+        candidate = {
+            "title": ["Identity Matters"],
+            "author": [None, "bad", {"given": 42, "family": {}}],
+            "published-print": [],
+            "published-online": "bad",
+            "container-title": {"name": "Journal of Testing"},
+            "DOI": {"value": "10.1234/identity"},
+        }
+        payload = {"message": {"items": [candidate]}}
+        with mock.patch.object(vcb, "_http_get_json", return_value=payload):
+            found, meta = vcb.search_crossref("Identity Matters")
+        self.assertFalse(found)
+        self.assertIn("incomplete", meta["error"].lower())
+
+    def test_crossref_complete_candidate_is_normalized(self):
+        with mock.patch.object(
+                vcb, "_http_get_json", return_value=self.COMPLETE_CROSSREF):
+            found, meta = vcb.search_crossref("Identity Matters")
+        self.assertTrue(found)
+        self.assertEqual(meta["authors"], ["John Smith"])
+        self.assertEqual(meta["year"], 2024)
+        self.assertEqual(meta["venue"], "Journal of Testing")
+        self.assertEqual(meta["doi"], "10.1234/identity")
+
+    def test_s2_rejects_malformed_response_shapes_without_raising(self):
+        malformed = (
+            [],
+            "garbage",
+            {"data": {}},
+            {"data": [None, {"title": 42}]},
+        )
+        for payload in malformed:
+            with self.subTest(payload=payload), mock.patch.object(
+                    vcb, "_http_get_json", return_value=payload):
+                found, meta = vcb.search_semantic_scholar("Identity Matters")
+            self.assertFalse(found)
+            self.assertIn("error", meta)
+
+    def test_s2_rejects_incomplete_or_invalid_candidate_metadata(self):
+        candidate = {
+            "title": "Identity Matters",
+            "authors": [None, "bad", {"name": 42}],
+            "year": None,
+            "venue": {"name": "Journal of Testing"},
+            "externalIds": ["bad"],
+        }
+        with mock.patch.object(
+                vcb, "_http_get_json", return_value={"data": [candidate]}):
+            found, meta = vcb.search_semantic_scholar("Identity Matters")
+        self.assertFalse(found)
+        self.assertIn("incomplete", meta["error"].lower())
+
+    def test_incomplete_crossref_falls_back_to_complete_s2(self):
+        incomplete_crossref = {
+            "message": {
+                "items": [{
+                    "title": ["Identity Matters"],
+                    "author": [],
+                    "published-print": {"date-parts": [[2024]]},
+                }]
+            }
+        }
+        with mock.patch.object(
+                vcb, "_http_get_json",
+                side_effect=[incomplete_crossref, self.COMPLETE_S2]), \
+                mock.patch.object(vcb.time, "sleep"):
+            found, meta = vcb.search_external(
+                "Identity Matters", bib_author="Smith, John"
+            )
+        self.assertTrue(found)
+        self.assertEqual(meta["source"], "s2")
+        self.assertEqual(meta["authors"], ["John Smith"])
+
+
 class TestVerifyUrlLifecycle(unittest.TestCase):
     def test_http_error_is_closed_even_for_ambiguous_head_response(self):
         exc = http_error(405)
@@ -1168,6 +1293,13 @@ class TestCitationIdentityRun(unittest.TestCase):
                 vcb.BibtexCitationVerifier.VERIFIED,
             )
             external_lookup.assert_not_called()
+
+    def test_non_ascii_unicode_digit_year_is_incomplete(self):
+        self.assertIsNone(
+            vcb.BibtexCitationVerifier._validated_metadata_year(
+                {"year": "²⁰²⁴"}
+            )
+        )
 
     def test_tex_read_error_fails_even_without_strict_mode(self):
         with tempfile.TemporaryDirectory() as td:
