@@ -119,6 +119,13 @@ Only the JSON boolean exactly `true` is an opt-in. Missing values, strings such
 as `"true"`, numbers, null, and all other invalid values mean `false`. Enabling
 this setting does not override a missing provider environment reference.
 
+When the setting is false, write `roles.verification` as the host-native
+adversarial reviewer. When the user explicitly opts in, select one configured
+provider/model whose environment reference is present and record it in
+`roles.verification`; if no such provider is available, keep the setting false
+and the role host-native. Do not leave an external verification role in a
+config whose opt-in is false.
+
 The user can change this later with `reconfigure`. Never infer consent from the
 presence of an environment variable or from enabling external discussions.
 
@@ -193,7 +200,8 @@ contains a legacy `api_key` value field, or lacks the version-2 privacy fields.
    version-2 object: preserve nonsecret provider bases, model choices, discussion
    roles, panel size, and LaTeX settings; remove every legacy value field; add
    `api_key_env`; and set missing, non-boolean, or invalid
-   `external_code_review` to `false`. Write it with the Secure Config Write
+   `external_code_review` to `false`. When it is false, reset
+   `roles.verification` to host-native. Write it with the Secure Config Write
    Protocol.
 5. If any reference is missing, pause external-provider migration and ask the
    user either to set it outside chat and resume, or to explicitly disable and

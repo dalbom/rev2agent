@@ -38,11 +38,11 @@ Before running any experiment script, use an independent adversarial reviewer to
 The mandatory default is a **host-native adversarial reviewer**. Sending unpublished code to an external provider is permitted only when both conditions hold:
 
 1. `.rev2agent_config.json` contains `external_code_review` as the JSON boolean exactly `true`; and
-2. the selected provider's `api_key_env` names an environment variable that is currently present.
+2. `roles.verification` identifies a configured external provider/model whose `api_key_env` names an environment variable that is currently present.
 
 Missing, `false`, string `"true"`, null, numeric, or otherwise invalid `external_code_review` values all mean `false`. A missing environment reference also forces the host-native path. In every fallback case, **Do not send the script, excerpts, diffs, data samples, or prompts containing the code to an external model.** Provider configuration for `major revision` discussions is not code-upload consent.
 
-When the exact opt-in and environment-reference checks both pass, report the external provider/model and send only the material needed for this review. Resolve the credential inside the provider-calling process; never print it or put it in a URL, log, or command argument.
+When the exact opt-in, `roles.verification`, and environment-reference checks all pass, report that configured external provider/model and send only the material needed for this review. Resolve the credential inside the provider-calling process; never print it or put it in a URL, log, or command argument.
 
 **Show which model is performing the review:**
 ```

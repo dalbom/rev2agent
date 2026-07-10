@@ -133,7 +133,7 @@ Style requirements:
 
 Apply the full **Code Verification Protocol** (defined in `prompts/05_experiment_execution.md`) to every analysis, statistical-test, and figure generation script written in this phase. This is the same 3-step protocol used for Phase 5 experiment scripts:
 
-1. **Independent logical review** — verify data flow, train/val/test splits, and feature-label correspondence. Use a host-native adversarial reviewer unless `.rev2agent_config.json` has `external_code_review` as the JSON boolean exactly `true` and the selected provider's `api_key_env` is present. Otherwise no code, excerpts, or data leave the host.
+1. **Independent logical review** — verify data flow, train/val/test splits, and feature-label correspondence. Use a host-native adversarial reviewer unless `.rev2agent_config.json` has `external_code_review` as the JSON boolean exactly `true`, `roles.verification` selects a configured external provider/model, and that provider's `api_key_env` is present. Otherwise no code, excerpts, or data leave the host.
 2. **Simplify code-quality pass** — unused imports, duplication, variable shadowing, memory efficiency, magic numbers.
 3. **Syntax check + execution**.
 

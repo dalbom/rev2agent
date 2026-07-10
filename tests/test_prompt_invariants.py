@@ -625,6 +625,7 @@ class TestCredentialAndCodeEgressSafety(unittest.TestCase):
         )
         self.assertIn("external_code_review", step1)
         self.assertIn("api_key_env", step1)
+        self.assertIn("roles.verification", step1)
         self.assertRegex(
             step1,
             re.compile(r"JSON boolean.*exactly.*true", re.IGNORECASE | re.DOTALL),
@@ -642,6 +643,16 @@ class TestCredentialAndCodeEgressSafety(unittest.TestCase):
             "Before running any experiment script, query an external model",
             step1,
         )
+
+    def test_setup_records_external_reviewer_only_after_opt_in(self):
+        opt_in = between(
+            self.setup,
+            "### 0.4 External Code Review",
+            "### 0.5",
+        )
+        self.assertIn("roles.verification", opt_in)
+        self.assertIn("host-native", opt_in)
+        self.assertRegex(opt_in, r"configured\s+provider")
 
     def test_phase6_inherits_privacy_gate_without_external_default(self):
         verification = between(

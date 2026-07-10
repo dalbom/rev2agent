@@ -233,7 +233,7 @@ External LLM providers and models are configured during Phase 0. `.rev2agent_con
 
 **When NOT to use external models:** Routine tasks (file editing, running scripts, status checks), or when Claude agents alone provide sufficient diversity.
 
-**External code privacy gate:** full or partial unpublished source may leave the host only when `external_code_review` is the JSON boolean exactly `true` and the selected provider's `api_key_env` is present. Missing, false, string-valued, or otherwise invalid settings mean false. Use a host-native adversarial reviewer and do not send code externally in every fallback case. Provider setup for discussion is not code-upload consent.
+**External code privacy gate:** full or partial unpublished source may leave the host only when `external_code_review` is the JSON boolean exactly `true`, `roles.verification` selects a configured external provider/model, and that provider's `api_key_env` is present. Missing, false, string-valued, or otherwise invalid settings mean false. Use a host-native adversarial reviewer and do not send code externally in every fallback case. Provider setup for discussion is not code-upload consent.
 
 ### Shared Prompt Compatibility
 

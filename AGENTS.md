@@ -238,7 +238,7 @@ External LLM providers and models are configured during Phase 0. `.rev2agent_con
 - `major revision` discussions
 - stuck or ambiguous research decisions
 
-Experiment-code verification is separate. Full code may leave the host only when `external_code_review` is the JSON boolean exactly `true` and the selected provider's `api_key_env` is present. A missing, false, or invalid setting means false and requires a host-native adversarial reviewer. Never send code externally in that fallback. Routine file editing, script execution, and status work do not require external models.
+Experiment-code verification is separate. Full code may leave the host only when `external_code_review` is the JSON boolean exactly `true`, `roles.verification` selects a configured external provider/model, and that provider's `api_key_env` is present. A missing, false, or invalid setting means false and requires a host-native adversarial reviewer. Never send code externally in that fallback. Routine file editing, script execution, and status work do not require external models.
 
 Do not assume Anthropic is redundant in all hosts. Follow the setup logic in `prompts/00_setup.md`, but interpret provider redundancy in the context of the current host environment.
 
