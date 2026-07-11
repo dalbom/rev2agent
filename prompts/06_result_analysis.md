@@ -42,7 +42,7 @@ To focus on specific metrics, use `--metric-keys`:
 ```bash
 python3 scripts/collect_results.py {project_dir}/experiment/results/{round_dir}/ \
     --fail-on-warnings \
-    --metric-keys cls_auc,recon_ssim,verif_auc \
+    --metric-keys accuracy,error_rate,latency \
     --output-md {project_dir}/experiment/results/{round_dir}/comparison_table.md \
     --output-json {project_dir}/experiment/results/{round_dir}/comparison_table.json
 ```
@@ -95,7 +95,7 @@ For each pair of methods being compared:
 5. Save results to {project_dir}/experiment/results/{round_dir}/statistical_tests.json
 ```
 
-**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/{round_dir}/` — must include the canonical fields `experiment_id`, `script`, `log_file`, `timestamp`, `resolved_config`, `config_fingerprint`, `round`, and `seed`. `seed` is always required and must never be omitted. Per-run files use a nonnegative integer; aggregated files use `seed: "aggregate"`, and `resolved_config.contributing_seeds` must be a nonempty list of nonnegative integers. Without this metadata, the current round's `collect_results.py --fail-on-warnings` gate fails on these files. The Result File Convention in `prompts/05_experiment_execution.md` remains authoritative.
+**`_meta` requirement:** `statistical_tests.json` — and any other JSON emitted by analysis or figure tasks into `experiment/results/{round_dir}/` — must include the canonical fields `experiment_id`, `evidence_contract`, `evidence_contract_id`, `evidence_contract_fingerprint`, `outcome_id`, `analysis_protocol_id`, `script`, `log_file`, `timestamp`, `resolved_config`, `config_fingerprint`, `round`, and `seed`. `seed` is always required and must never be omitted. Per-run files use a nonnegative integer; aggregated files use `seed: "aggregate"`, and `resolved_config.contributing_seeds` must be a nonempty list of nonnegative integers. Without this metadata, the current round's `collect_results.py --fail-on-warnings` gate fails on these files. The Result File Convention in `prompts/05_experiment_execution.md` remains authoritative.
 
 After generating statistical test results, update `{project_dir}/experiment/results/{round_dir}/INDEX.md` with any new result files created during analysis.
 
@@ -137,7 +137,7 @@ Apply the full **Code Verification Protocol** (defined in `prompts/05_experiment
 2. **Simplify code-quality pass** — unused imports, duplication, variable shadowing, memory efficiency, magic numbers.
 3. **Syntax check + execution**.
 
-**Step 1 is not optional for figure or analysis scripts.** Scripts that train decoders, compute metrics, or generate numerical values at runtime are exactly the class of scripts where the Round 5 silent-failure incident occurred (train features matched against val images). Pure-plotting scripts (read a JSON, render a figure) are exempt from Step 1 but still require Step 2.
+**Step 1 is not optional for figure or analysis scripts.** Scripts that fit auxiliary models, recompute outcomes, or generate evidence-bearing values at runtime are exactly the class of scripts where executable code can silently evaluate the wrong evidence. Pure-rendering scripts (read a validated result artifact and render it without recomputation) are exempt from Step 1 but still require Step 2.
 
 ### 6.7 Interpretation
 
@@ -148,6 +148,24 @@ After collecting all quantitative results, provide interpretation:
 3. **Ablation insights**: Which components contribute most? Any interactions?
 4. **Failure cases**: Where does the method underperform? Why?
 5. **Comparison to SOTA**: How does this compare to published numbers?
+
+### Material Deviation Gate (MANDATORY)
+
+Compare the collected evidence with the predeclared Evidence Contract before
+interpreting success. A deviation is material when it crosses a contract's
+declared tolerance or invalidity rule, breaks an expected control or data-flow
+assumption, or could change the conclusion, positioning, or claim scope.
+
+On any material deviation, stop progression to manuscript writing and diagnose
+the cause. Do not explain the deviation away, replace the primary outcome, or
+change the comparison or aggregation after seeing results and still call the
+analysis confirmatory.
+
+A post-hoc outcome, comparator, aggregation, or interpretation change is
+allowed only as an **exploratory** finding. Preserve the original result and
+reason for the change, create a new Evidence Contract version, and obtain new
+or independently confirmed evidence before using the changed analysis as a
+central confirmatory claim.
 
 ### 6.8 Assess Paper Viability
 
@@ -283,7 +301,7 @@ Activation is route-specific, including in `review_reentry`:
 When routing back to Phase 4, set `sub_step` to `"refinement"` (Phase 4 then runs in Refinement Mode — see `prompts/04_experiment_design.md`) if ANY of the following holds:
 
 - **Mandatory after Round 1** — the first round is always treated as a pilot.
-- A key metric deviates **10+ percentage points** from expectations.
+- A result triggers the **Material Deviation Gate** under its predeclared Evidence Contract or would materially change the conclusion or claim scope.
 - An experiment reveals the paper's **positioning must change** (e.g., an attack succeeds, a baseline beats the proposed method).
 - A **confound or artifact** was discovered in the data.
 - The **default config changes** (architecture, dimensions, etc.).

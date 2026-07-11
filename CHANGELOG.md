@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-07-11]
+
+### Added
+- Domain-neutral Evidence Contracts, semantic naming, material-deviation handling, claim-challenge resolution, and frozen internal reproducibility gates across Phases 4-8
+- Contract, outcome, and analysis-protocol identity in result metadata and seed aggregation
+
+### Changed
+- Result collection now fails closed on missing, mismatched, or silently reused Evidence Contract identities
+
 ## [2026-07-10]
 
 ### Added

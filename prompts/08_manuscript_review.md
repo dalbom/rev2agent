@@ -92,7 +92,7 @@ With 1-sentence justification.
 Every reviewer MUST complete this checklist before writing their review. Report any failures as Major Issues.
 
 **1. Every result must have a setup.**
-For each quantitative result (AUC, accuracy, SSIM, correlation, etc.) in the manuscript:
+For each quantitative result (reported scores, error rates, correlations, resource measurements, etc.) in the manuscript:
 - Is the experimental methodology (what was done, how) described before the result appears?
 - Is the motivation (why this experiment) stated?
 - If the setup is in a different section, is there an explicit cross-reference?
@@ -103,6 +103,8 @@ For each factual claim in the manuscript:
 - Does it cite a specific table, figure, or reference?
 - If it cites a number, can that number be found in a table/figure?
 - Are there numbers in the text that appear nowhere in any table or figure?
+- Does `data_provenance.md` link the claim to an Evidence Contract, outcome, and analysis protocol?
+- Does the manuscript describe the same unit, procedure, comparison, and claim scope as that contract?
 Flag any orphan numbers (quantitative claims not backed by tables/figures).
 
 **3. Content belongs in the right section.**
@@ -230,6 +232,27 @@ After collecting Pass 1 reviews, the Editor-in-Chief performs a section-by-secti
 
 Issues found in Pass 2 are added to the synthesis with "Pass 2" tag and treated with the same priority as Pass 1 consensus issues.
 
+## Claim Challenge Ledger (MANDATORY)
+
+Before synthesis, create or update
+`{project_dir}/manuscript/claim_challenges.md`. For every central claim, record
+claim-relevant contradictory results, failed controls, unfavorable baselines,
+robustness or generalization failures, unresolved reviewer objections, and
+plausible alternative explanations. Link each challenge to its evidence.
+
+Each challenge must end in exactly one resolution state:
+
+- `resolved_by_evidence` — new evidence answers it;
+- `claim_narrowed` — the manuscript scope is reduced accordingly;
+- `limitation_disclosed` — the claim remains defensible with an explicit limit;
+- `research_redirected` — the project routes to new experiments or reframing;
+- `claim_withdrawn` — the unsupported claim is removed.
+
+`out_of_scope` alone is not a resolution when the challenge bears directly on
+a central claim. If any unresolved challenge bears directly on a central claim,
+the manuscript must not proceed to completion or submission; route it to the
+owning phase instead.
+
 ## Editor-in-Chief Synthesis
 
 After both passes:
@@ -250,6 +273,10 @@ After both passes:
    - **Accept**: Implement the suggested fix
    - **Partially accept**: Implement a modified version with justification
    - **Reject**: Explain why the suggestion is not applicable
+
+   Update the Claim Challenge Ledger for every issue affecting a central claim.
+   The synthesis must account for individual high-severity evidence on its
+   merits; reviewer vote count cannot erase contradictory evidence.
 
 4. **Implement**: Apply changes to the manuscript files.
 

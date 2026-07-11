@@ -22,14 +22,52 @@ def write_json(path, data):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def make_contract(contract_id="E01-primary", outcome_id="primary_outcome"):
+    return {
+        "schema_version": 1,
+        "evidence_contract_id": contract_id,
+        "research_question": "Does the procedure support the scoped claim?",
+        "unit_of_analysis": "observation",
+        "population": "declared evaluation population",
+        "inputs": ["declared input"],
+        "procedure": ["declared analysis"],
+        "comparison_or_control": "declared control",
+        "data_boundaries": {"fit": "fit split", "evaluation": "test split"},
+        "outcomes": [
+            {
+                "outcome_id": outcome_id,
+                "construct": "declared construct",
+                "measurement": "declared measurement",
+                "aggregation": "mean",
+                "direction": "higher",
+            }
+        ],
+        "decision_criteria": "predeclared criterion",
+        "claim_scope": ["scoped claim"],
+    }
+
+
+def fingerprint_contract(contract):
+    payload = json.dumps(
+        contract, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
 def complete_meta(experiment_id="E01", seed=0, fingerprint=None, round_=1):
     resolved_config = {"model": experiment_id}
+    contract = make_contract(f"{experiment_id}-primary")
     if fingerprint is None:
         fingerprint = fingerprint_config(
             resolved_config, aggregate=seed == "aggregate"
         )
     return {
         "experiment_id": experiment_id,
+        "evidence_contract": contract,
+        "evidence_contract_id": contract["evidence_contract_id"],
+        "evidence_contract_fingerprint": fingerprint_contract(contract),
+        "outcome_id": "primary_outcome",
+        "analysis_protocol_id": "primary_analysis_v1",
         "config_fingerprint": fingerprint,
         "script": "scripts/eval.py",
         "log_file": "logs/eval.log",
@@ -168,6 +206,11 @@ class TestMetaHandling(unittest.TestCase):
     def test_required_meta_types_are_enforced(self):
         invalid_cases = [
             ("experiment_id", " "),
+            ("evidence_contract", []),
+            ("evidence_contract_id", " "),
+            ("evidence_contract_fingerprint", 123),
+            ("outcome_id", None),
+            ("analysis_protocol_id", []),
             ("config_fingerprint", 123),
             ("script", None),
             ("log_file", []),
@@ -187,6 +230,84 @@ class TestMetaHandling(unittest.TestCase):
             collected = cr.collect_results(tdir)
             self.assertEqual(collected["entries"], [])
             self.assertEqual(len(collected["warnings"]), len(invalid_cases))
+
+    def test_evidence_contract_fingerprint_uses_sha256_wire_format(self):
+        meta = complete_meta()
+        _, valid_errors = cr.extract_meta({"_meta": meta})
+        self.assertEqual(valid_errors, [])
+
+        meta["evidence_contract_fingerprint"] = "1" * 64
+        _, invalid_errors = cr.extract_meta({"_meta": meta})
+        self.assertTrue(
+            any("evidence_contract_fingerprint" in error for error in invalid_errors),
+            invalid_errors,
+        )
+
+    def test_evidence_contract_snapshot_must_match_id_fingerprint_and_outcome(self):
+        invalid_cases = []
+
+        fingerprint_mismatch = complete_meta(experiment_id="fingerprint")
+        fingerprint_mismatch["evidence_contract"]["research_question"] = "changed"
+        invalid_cases.append(("fingerprint", fingerprint_mismatch))
+
+        id_mismatch = complete_meta(experiment_id="id")
+        id_mismatch["evidence_contract_id"] = "different-contract"
+        invalid_cases.append(("id", id_mismatch))
+
+        outcome_mismatch = complete_meta(experiment_id="outcome")
+        outcome_mismatch["outcome_id"] = "undeclared_outcome"
+        invalid_cases.append(("outcome", outcome_mismatch))
+
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            for name, meta in invalid_cases:
+                write_json(
+                    tdir / f"{name}.json",
+                    {"_meta": meta, "accuracy": 0.5},
+                )
+            collected = cr.collect_results(tdir)
+            self.assertEqual(collected["entries"], [])
+            for field in (
+                "evidence_contract_fingerprint",
+                "evidence_contract_id",
+                "outcome_id",
+            ):
+                self.assertTrue(
+                    any(field in warning for warning in collected["warnings"]),
+                    (field, collected["warnings"]),
+                )
+
+    def test_entries_preserve_semantic_identity(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            write_json(tdir / "result.json", RESULT_A)
+            entry = cr.collect_results(tdir)["entries"][0]
+            self.assertEqual(entry["evidence_contract_id"], "E01-primary")
+            self.assertEqual(entry["outcome_id"], "primary_outcome")
+            self.assertEqual(entry["analysis_protocol_id"], "primary_analysis_v1")
+
+    def test_reused_contract_id_with_different_fingerprints_warns(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            for seed, question in [(0, "question a"), (1, "question b")]:
+                meta = complete_meta(seed=seed)
+                meta["evidence_contract"]["research_question"] = question
+                meta["evidence_contract_fingerprint"] = fingerprint_contract(
+                    meta["evidence_contract"]
+                )
+                write_json(
+                    tdir / f"seed{seed}.json",
+                    {"_meta": meta, "accuracy": 0.5},
+                )
+
+            collected = cr.collect_results(tdir)
+            self.assertTrue(
+                any(
+                    "Evidence Contract ID reused with multiple fingerprints" in warning
+                    for warning in collected["warnings"]
+                ),
+                collected["warnings"],
+            )
 
     def test_fingerprint_mismatch_rejects_different_configs_before_aggregation(self):
         with tempfile.TemporaryDirectory() as td:
@@ -328,6 +449,43 @@ class TestSeedAggregation(unittest.TestCase):
             )
             self.assertAlmostEqual(
                 aggregates[("E02", fp_b)]["metrics"]["accuracy"]["mean"], 0.15
+            )
+
+    def test_contract_and_analysis_identities_are_aggregated_separately(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdir = Path(td)
+            cases = [
+                ("contract-a", "analysis-a", 0, 0.9),
+                ("contract-a", "analysis-a", 1, 0.8),
+                ("contract-b", "analysis-b", 2, 0.3),
+                ("contract-b", "analysis-b", 3, 0.2),
+            ]
+            for contract_id, analysis_id, seed, accuracy in cases:
+                meta = complete_meta(seed=seed)
+                contract = make_contract(contract_id)
+                contract_fp = fingerprint_contract(contract)
+                meta["evidence_contract"] = contract
+                meta["evidence_contract_id"] = contract_id
+                meta["evidence_contract_fingerprint"] = contract_fp
+                meta["analysis_protocol_id"] = analysis_id
+                write_json(
+                    tdir / f"{contract_id}_{seed}.json",
+                    {"_meta": meta, "accuracy": accuracy},
+                )
+
+            collected = cr.collect_results(tdir)
+            self.assertEqual(len(collected["aggregates"]), 2)
+            aggregates = {
+                (item["evidence_contract_id"], item["analysis_protocol_id"]): item
+                for item in collected["aggregates"]
+            }
+            self.assertAlmostEqual(
+                aggregates[("contract-a", "analysis-a")]["metrics"]["accuracy"]["mean"],
+                0.85,
+            )
+            self.assertAlmostEqual(
+                aggregates[("contract-b", "analysis-b")]["metrics"]["accuracy"]["mean"],
+                0.25,
             )
 
     def test_duplicate_seed_identity_warns_and_suppresses_aggregate(self):

@@ -122,7 +122,58 @@ Each experiment must be run **N times** (typically 3-5) with different random se
 
 **One run, one file:** Each experiment configuration produces exactly one canonical result file. If the same experiment needs to be referenced by multiple tables or figures, they all cite the same file — never re-run to get a "second opinion."
 
-### 4.3 Time Estimation
+### 4.3 Evidence Contract (MANDATORY)
+
+Before implementation, create one machine-readable Evidence Contract for every
+experiment that may support a manuscript-facing claim:
+
+`{project_dir}/experiment/configs/evidence_contracts/{evidence_contract_id}.json`
+
+The shared workflow defines only universal fields. Domain-specific definitions
+belong in the project-owned contract, not in shared prompts.
+
+```json
+{
+  "schema_version": 1,
+  "evidence_contract_id": "E01_primary_outcome",
+  "research_question": "What claim is this experiment intended to test?",
+  "unit_of_analysis": "What entity contributes one observation?",
+  "population": "What data or cases are in scope?",
+  "inputs": ["Inputs available to the procedure"],
+  "procedure": ["Ordered transformations and measurements"],
+  "comparison_or_control": "The reference condition or null control",
+  "data_boundaries": {
+    "fit": "Data used to fit or select anything",
+    "evaluation": "Data reserved for final evaluation"
+  },
+  "outcomes": [
+    {
+      "outcome_id": "primary_outcome",
+      "construct": "What is being measured",
+      "measurement": "How it is computed",
+      "aggregation": "How observations become the reported result",
+      "direction": "higher|lower|two_sided|descriptive"
+    }
+  ],
+  "decision_criteria": "Predeclared success, failure, and invalidity rules",
+  "claim_scope": ["Claims this evidence may support"]
+}
+```
+
+Use stable, descriptive snake-case IDs. Compute
+`evidence_contract_fingerprint` as SHA-256 over canonical JSON (UTF-8, sorted
+keys, stable separators) and record it in every result produced under the
+contract. A semantic change to the unit, procedure, outcome, comparison,
+aggregation, data boundary, decision criteria, or claim scope requires a new
+contract version and fingerprint; never edit a contract in place after results
+exist.
+
+Before user confirmation, verify that every experiment matrix row points to at
+least one contract and that every primary outcome has predeclared decision
+criteria. Exploratory analyses may be declared as such, but must not be
+presented later as predeclared confirmatory evidence.
+
+### 4.4 Time Estimation
 
 Calculate total time:
 ```
@@ -147,7 +198,7 @@ Buffer (20% for retries/debugging): +W hours
 Estimated total: ~V days
 ```
 
-### 4.4 Storage Estimation
+### 4.5 Storage Estimation
 
 ```
 📦 Storage Estimation
@@ -167,7 +218,7 @@ Available storage: ~YGB
 Status: ✅ Sufficient / ⚠️ Tight / ❌ Insufficient
 ```
 
-### 4.5 Dependency List
+### 4.6 Dependency List
 
 List all required packages and tools:
 ```
@@ -188,7 +239,7 @@ Utilities:
   - scipy (for statistical tests)
 ```
 
-### 4.6 Risk Assessment
+### 4.7 Risk Assessment
 
 Identify potential issues:
 - Dataset download may fail (large files, authentication required).
@@ -196,7 +247,7 @@ Identify potential issues:
 - Training divergence → learning rate schedules to try.
 - Baseline reproduction may not match reported numbers exactly → acceptable tolerance.
 
-### 4.7 Data Integrity Checklist
+### 4.8 Data Integrity Checklist
 
 Critical for paper validity:
 - [ ] Training and test sets are strictly separated.
@@ -205,6 +256,8 @@ Critical for paper validity:
 - [ ] Random seeds are fixed and recorded.
 - [ ] Data preprocessing is identical across all experiments.
 - [ ] Evaluation protocol matches the standard benchmark protocol.
+- [ ] Every manuscript-facing experiment has a versioned Evidence Contract.
+- [ ] Contract decision criteria and invalidity conditions are declared before execution.
 
 ## Output to User
 
@@ -228,7 +281,7 @@ When the design is confirmed, Phase 4 assigns the round's `short_name` — 1-3 w
 
 After user confirms the experiment design, write:
 - **File**: `{project_dir}/summaries/round{current_round}_{short_name}/phase4_experiment_design.md`
-- **Contents**: Experiment matrix (all experiments with IDs, datasets, methods, estimated time), time and storage estimates, dependency list, risk assessment, data integrity checklist. If in refinement mode, also include: what changed from the previous plan, evidence that triggered refinement, comparison of original vs. refined plan.
+- **Contents**: Experiment matrix (all experiments with IDs, datasets, methods, estimated time), Evidence Contract IDs and fingerprints, time and storage estimates, dependency list, risk assessment, data integrity checklist. If in refinement mode, also include: what changed from the previous plan, evidence that triggered refinement, comparison of original vs. refined plan.
 
 Create the round subfolder `round{current_round}_{short_name}/` if it does not exist yet.
 

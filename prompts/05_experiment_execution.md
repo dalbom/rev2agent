@@ -21,7 +21,7 @@ Create one `run_dir` for every experiment ID and seed. Run artifacts are scoped 
 
 ## Code Verification Protocol (MANDATORY)
 
-**Every experiment script MUST pass this 3-step verification before execution.** No exceptions. This protocol was established after a Round 5 incident where train features were matched against val images, producing silently invalid results that wasted hours of GPU time and led to incorrect conclusions.
+**Every experiment script MUST pass this 3-step verification before execution.** No exceptions. This protocol was established after a silent methodology failure where executable code evaluated mismatched evidence and produced incorrect conclusions.
 
 ### Scope
 
@@ -55,15 +55,17 @@ Reviewer: host-native adversarial reviewer
 ```
 Review this experiment script for LOGICAL/METHODOLOGY correctness (not code quality).
 
-INTENDED EXPERIMENT:
-[Describe what the experiment is supposed to test]
+EVIDENCE CONTRACT:
+[Provide the exact contract path, evidence_contract_id, fingerprint, and content]
 
 CRITICAL DATA FLOW TO VERIFY:
-1. Which data split (train/val/test) is used for what purpose?
-2. Do feature-image pairs correspond to the SAME samples?
-3. Is the decoder trained on different samples than the query set?
-4. Are the evaluation metrics computed on the correct set?
-5. Is there any train/test leakage?
+1. Does the code implement the contract's research question and unit of analysis?
+2. Are samples and any labels, targets, or outcomes constructed as declared?
+3. Are data used for fit, selection, or calibration separated from final evaluation as declared?
+4. Do the ordered transformations and comparisons match the declared procedure?
+5. Is each outcome computed and aggregated exactly as declared?
+6. Do controls and comparison conditions differ only in their declared factors?
+7. Could the code run successfully while measuring a different construct or population?
 
 CODE:
 [Provide the script to the selected reviewer. Keep it on-host unless the two
@@ -90,6 +92,23 @@ Only after Steps 1-2 pass:
 ### Automatic Enforcement
 
 **This protocol is NOT optional.** It runs automatically every time an experiment script is written or modified, without waiting for user instruction. Never skip Steps 1-2 even if the code "looks correct." The Round 5 incident proved that correct-looking code can be silently wrong.
+
+## Semantic Naming (MANDATORY)
+
+Every manuscript-facing function, result key, table column, and figure label
+must reveal the measurement semantics well enough to distinguish it from other
+valid protocols. Include the measured construct and output statistic, plus the
+unit of analysis or a material processing path when either changes the meaning.
+
+Do not use bare ambiguous umbrella names such as `evaluate`, `eval_metric`, or
+`score` for protocol-specific functions or result keys, and do not reuse a
+broad domain label for multiple Evidence Contracts. Different contracts
+or analysis protocols must not share one name as if they were the same
+measurement. If semantics change, introduce a new descriptive name or explicit
+version and update `evidence_contract_id`, `outcome_id`, and
+`analysis_protocol_id` together. The logical reviewer must fail a script whose
+names conceal a material difference from its contract, even when the numerical
+computation itself is correct.
 
 ## Subagent Safety Protocol
 
@@ -136,6 +155,11 @@ Every experiment script must include a `_meta` field in its output JSON:
 {
   "_meta": {
     "experiment_id": "E01",
+    "evidence_contract": {"...": "exact Phase 4 contract snapshot"},
+    "evidence_contract_id": "E01_primary_outcome",
+    "evidence_contract_fingerprint": "sha256:...",
+    "outcome_id": "primary_outcome",
+    "analysis_protocol_id": "primary_analysis_v1",
     "script": "scripts/run_gradient_inversion.py",
     "log_file": "experiment/logs/round12_gradient_inversion/E01/seed42/attempt_1_20260405T143000Z.log",
     "timestamp": "2026-04-05T14:30:00",
@@ -148,7 +172,15 @@ Every experiment script must include a `_meta` field in its output JSON:
 }
 ```
 
-This enables tracing from any result file back to its generating script, log, and configuration without manual grep.
+This enables tracing from any result file back to its Evidence Contract,
+analysis meaning, generating script, log, and configuration without manual
+grep. Embed the exact immutable Phase 4 contract as `evidence_contract`.
+`collect_results.py` recomputes its fingerprint and verifies that
+`evidence_contract_id` and `outcome_id` match the embedded snapshot.
+`evidence_contract_fingerprint` uses the same `sha256:<64 lowercase hex
+characters>` wire format as `config_fingerprint`. Reusing one
+`evidence_contract_id` with multiple fingerprints is contract drift and stops
+the strict collection gate; create a new versioned ID instead.
 
 `_meta.seed` is always required; never omit it or set it to `null`:
 
@@ -171,7 +203,7 @@ and other non-finite values are not valid result evidence. Paths are never used
 to infer a missing round or seed.
 
 Per-seed statistics are grouped only by
-`(round, experiment_id, config_fingerprint, method, group)`. An already
+`(round, experiment_id, config_fingerprint, evidence_contract_id, evidence_contract_fingerprint, outcome_id, analysis_protocol_id, method, group)`. An already
 aggregated file remains visible as provenance but never participates in seed
 aggregation. A duplicate seeded identity exists when two result rows share that
 tuple plus the same `seed`; the collector warns and suppresses that aggregate;
@@ -217,6 +249,7 @@ The setup subagents work independently, so they must share a single interface de
 - **CLI argument contract** — the exact command-line interface for `train.py`, `evaluate.py`, and each baseline runner (argument names, types, defaults).
 - **Checkpoint path and format** — `{project_dir}/experiment/checkpoints/{run_dir}/...`, including experiment ID, seed, `resolved_config`, `config_fingerprint`, training state, timestamp, and immutable log path.
 - **Result-file paths and `_meta` fields** — the result JSON locations per experiment and the required `_meta` schema (see "Experiment Result File Convention" above).
+- **Evidence Contract interface** — exact contract paths, IDs, fingerprints, outcome IDs, analysis protocol IDs, and semantic names used across scripts and outputs.
 - **Resume contract** — exact fingerprint and seed checks from "Checkpoint and Marker Configuration Contract" above.
 
 **Every task prompt below MUST include the contents (or path) of `interface.md`.** Subagents implement against the contract; they do not invent their own conventions.

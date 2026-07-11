@@ -34,6 +34,81 @@ def state_line(section, field):
     )
 
 
+class TestEvidenceIntegrityGates(unittest.TestCase):
+    def test_phase4_requires_project_owned_evidence_contracts(self):
+        phase4 = read("prompts/04_experiment_design.md")
+        self.assertIn("Evidence Contract (MANDATORY)", phase4)
+        self.assertIn(
+            "experiment/configs/evidence_contracts/{evidence_contract_id}.json",
+            phase4,
+        )
+        for field in (
+            "research_question",
+            "unit_of_analysis",
+            "procedure",
+            "data_boundaries",
+            "outcomes",
+            "decision_criteria",
+            "claim_scope",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, phase4)
+
+    def test_phase5_logical_review_is_contract_driven_and_domain_neutral(self):
+        phase5 = read("prompts/05_experiment_execution.md")
+        self.assertIn("EVIDENCE CONTRACT", phase5)
+        self.assertIn("unit of analysis", phase5.lower())
+        self.assertIn("labels, targets, or outcomes", phase5)
+        self.assertIn("fit, selection, or calibration", phase5)
+        self.assertNotIn("Do feature-image pairs correspond", phase5)
+        self.assertNotIn("Is the decoder trained", phase5)
+
+    def test_phase5_requires_semantic_names_and_contract_metadata(self):
+        phase5 = read("prompts/05_experiment_execution.md")
+        self.assertIn("Semantic Naming (MANDATORY)", phase5)
+        self.assertIn("ambiguous umbrella names", phase5)
+        for field in (
+            "evidence_contract_id",
+            "evidence_contract_fingerprint",
+            "outcome_id",
+            "analysis_protocol_id",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, phase5)
+
+    def test_phase6_uses_contract_materiality_not_global_percentage_points(self):
+        phase6 = read("prompts/06_result_analysis.md")
+        self.assertIn("Material Deviation Gate (MANDATORY)", phase6)
+        self.assertIn("predeclared", phase6.lower())
+        self.assertIn("exploratory", phase6.lower())
+        self.assertIn("new Evidence Contract version", phase6)
+        self.assertNotIn("10+ percentage points", phase6)
+
+    def test_phase7_requires_semantic_provenance_and_internal_reproduction(self):
+        phase7 = read("prompts/07_manuscript_writing.md")
+        self.assertIn("evidence_contract_id", phase7)
+        self.assertIn("Frozen Reproducibility Bundle", phase7)
+        self.assertIn("internal independent reviewer", phase7)
+        self.assertRegex(
+            phase7,
+            re.compile(
+                r"public release.*venue.*legal.*privacy.*licens",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+
+    def test_phase8_blocks_unresolved_challenges_to_central_claims(self):
+        phase8 = read("prompts/08_manuscript_review.md")
+        self.assertIn("Claim Challenge Ledger", phase8)
+        self.assertRegex(
+            phase8,
+            re.compile(
+                r"unresolved.*central claim.*must not.*proceed",
+                re.IGNORECASE | re.DOTALL,
+            ),
+        )
+
+
 class TestCanonicalRoundState(unittest.TestCase):
     def test_schema_persists_current_round_short_name(self):
         conventions = read("prompts/conventions.md")
@@ -360,7 +435,9 @@ class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
         self.assertRegex(result_contract, r"rejects the entire\s+file")
         self.assertIn("non-finite", result_contract)
         self.assertIn(
-            "(round, experiment_id, config_fingerprint, method, group)",
+            "(round, experiment_id, config_fingerprint, evidence_contract_id, "
+            "evidence_contract_fingerprint, outcome_id, analysis_protocol_id, "
+            "method, group)",
             result_contract,
         )
         self.assertIn("duplicate seeded identity", result_contract)
@@ -390,7 +467,9 @@ class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
         phase6 = read("prompts/06_result_analysis.md")
         meta = between(phase6, "**`_meta` requirement:**", "After generating")
         canonical_fields = (
-            "`experiment_id`, `script`, `log_file`, `timestamp`, "
+            "`experiment_id`, `evidence_contract`, `evidence_contract_id`, "
+            "`evidence_contract_fingerprint`, `outcome_id`, "
+            "`analysis_protocol_id`, `script`, `log_file`, `timestamp`, "
             "`resolved_config`, `config_fingerprint`, `round`, and `seed`"
         )
         self.assertIn(canonical_fields, meta)
