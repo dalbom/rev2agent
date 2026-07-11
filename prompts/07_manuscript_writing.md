@@ -356,13 +356,13 @@ After all sections are written and references are verified, review each section 
 After all subagents return their sections AND references are verified AND the humanizer pass is complete:
 
 1. **Assemble** `main.tex` as ONE self-contained file: inline the full content of every `sections/*.tex` file AND every `tables/*.tex` fragment directly into `main.tex`, in final section order. **The final deliverable contains NO `\input{sections/...}` or `\input{tables/...}` statements.** The `sections/*.tex` files are kept on disk as intermediate artifacts, but `main.tex` must compile standalone (plus `references.bib`, `style/`, and the graphics files — `\includegraphics{figures/...}` paths remain as-is; figures are not inlined).
-2. **Figure script verification**: If figure/visualization generation scripts exist (e.g., under `{project_dir}/manuscript/figures/`), verify that their experimental configuration matches the project's current default. Scripts that compute values at runtime (train decoders, compute metrics) are especially prone to config drift. Re-run any script whose config is stale.
+2. **Figure script verification**: If figure/visualization generation scripts exist (e.g., under `{project_dir}/manuscript/figures/`), verify that their experimental configuration matches the project's current default. Scripts that fit models, recompute outcomes, or otherwise produce evidence at runtime are especially prone to config drift. Re-run any script whose config is stale.
 3. **Consistency check**:
    - Notation: Are symbols used consistently across sections?
    - Citations: Are all `\cite{}` keys present in `references.bib`?
    - Cross-references: Do all `\ref{}` and `\label{}` match?
    - Table/figure numbering: Consistent and in order of appearance.
-4. **Data provenance**: Create or update `{project_dir}/manuscript/data_provenance.md`. For every numerical claim in the manuscript (tables, figures, inline text), record the claim, source file, and generating script. This is the single source of truth for "where did this number come from?"
+4. **Data and semantic provenance**: Create or update `{project_dir}/manuscript/data_provenance.md`. For every evidence-bearing claim in the manuscript (quantitative, qualitative, or theoretical), record the claim, source artifact, generating script or derivation, `evidence_contract_id`, `evidence_contract_fingerprint`, `outcome_id`, and `analysis_protocol_id`. This is the single source of truth for both "where did this evidence come from?" and "what exactly does it measure?"
 
    Format:
    ```
@@ -370,13 +370,26 @@ After all subagents return their sections AND references are verified AND the hu
    ```
 
    **Rules:**
-   - **Single-run principle.** Each experiment configuration produces ONE canonical result file. All manuscript references (tables, figures, inline text) must cite the same file. Never re-run an experiment that already has a result file unless the protocol has changed — re-running with a different seed or decoder init creates conflicting numbers.
+   - **Single-run principle.** Each experiment configuration produces ONE canonical result file. All manuscript references (tables, figures, inline text) must cite the same file. Never re-run an experiment that already has a result file unless the protocol has changed — a protocol change requires a new Evidence Contract version and result identity.
+   - **Semantic parity.** Comparable cells and claims must use the same Evidence Contract and analysis protocol unless the difference is explicit and justified. A matching metric label is not evidence of matching semantics.
    - **Figure-table consistency.** When a figure and a table report metrics for the same experiment, they must use the same result file. If a figure uses per-image values from a visualization run, inline text must cite the table's canonical values, not the figure's per-sample values.
    - **Runtime-computed values** (values not stored in a result JSON but calculated by a script at runtime) must record the script path AND the configuration used (architecture, dimensions, seeds). These are the highest-risk entries for config drift.
    - **"Qualitative only" is not an exemption** from config consistency. If a figure script uses a different experimental configuration than the project default, it is a bug — not an accepted inconsistency.
    - **No "Known inconsistencies (accepted)" section.** Every inconsistency must instead specify: (a) why it exists, (b) when it will be resolved, and (c) what manuscript content it affects. Use the label "deferred" rather than "accepted."
    - Update `data_provenance.md` whenever a new experiment is run, a default config changes, or manuscript text is modified.
-5. **Compile** the LaTeX. Use the following fallback chain (preferred tool first):
+5. **Frozen Reproducibility Bundle (MANDATORY)**: Before the manuscript can
+   enter Phase 8, freeze an internal bundle containing the relevant code or
+   derivation snapshot, environment, Evidence Contracts, resolved configs,
+   commands, data/model identifiers, result hashes, and table/figure generation
+   path. An internal independent reviewer must reproduce at least one central
+   claim from its source input through the manuscript-facing output.
+
+   Internal reproducibility is mandatory. Public release or supplementary
+   submission is conditional on venue policy, legal obligations, privacy,
+   licensing, and user authorization; never treat inability to publish an
+   artifact as permission to skip the internal reproduction gate.
+
+6. **Compile** the LaTeX. Use the following fallback chain (preferred tool first):
 
    1. **tectonic** (preferred; path in `.rev2agent_config.json` under `latex.tectonic_path`). Handles bibtex and rerun cycles automatically and downloads missing packages on first use.
       ```bash

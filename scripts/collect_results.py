@@ -33,6 +33,29 @@ from typing import Any, Dict, List, Optional, Tuple
 _OUTPUT_SIGNATURE_KEYS = {"results_dir", "files_scanned", "entries"}
 
 
+def is_sha256_fingerprint(value: Any) -> bool:
+    """Return whether *value* uses the canonical ``sha256:<hex>`` wire format."""
+    prefix = "sha256:"
+    return (
+        isinstance(value, str)
+        and value.startswith(prefix)
+        and len(value) == len(prefix) + 64
+        and all(char in "0123456789abcdef" for char in value[len(prefix):])
+    )
+
+
+def compute_evidence_contract_fingerprint(contract: Dict[str, Any]) -> str:
+    """Return the canonical fingerprint of an embedded Evidence Contract."""
+    canonical_json = json.dumps(
+        contract,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
 def compute_config_fingerprint(
     resolved_config: Dict[str, Any], *, aggregate: bool = False
 ) -> str:
@@ -165,6 +188,11 @@ def extract_meta(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     errors: List[str] = []
     required = (
         "experiment_id",
+        "evidence_contract",
+        "evidence_contract_id",
+        "evidence_contract_fingerprint",
+        "outcome_id",
+        "analysis_protocol_id",
         "config_fingerprint",
         "script",
         "log_file",
@@ -178,12 +206,77 @@ def extract_meta(data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             errors.append(f"_meta.{field} is required")
 
     for field in (
-        "experiment_id", "config_fingerprint", "script", "log_file", "timestamp"
+        "experiment_id",
+        "evidence_contract_id",
+        "evidence_contract_fingerprint",
+        "outcome_id",
+        "analysis_protocol_id",
+        "config_fingerprint",
+        "script",
+        "log_file",
+        "timestamp",
     ):
         if field in meta and (
             not isinstance(meta[field], str) or not meta[field].strip()
         ):
             errors.append(f"_meta.{field} must be a nonempty string")
+
+    contract_fingerprint = meta.get("evidence_contract_fingerprint")
+    if (
+        "evidence_contract_fingerprint" in meta
+        and isinstance(contract_fingerprint, str)
+        and bool(contract_fingerprint.strip())
+        and not is_sha256_fingerprint(contract_fingerprint)
+    ):
+        errors.append(
+            "_meta.evidence_contract_fingerprint must use "
+            "sha256:<64 lowercase hex characters>"
+        )
+
+    contract = meta.get("evidence_contract")
+    if "evidence_contract" in meta and not isinstance(contract, dict):
+        errors.append("_meta.evidence_contract must be an object")
+    elif isinstance(contract, dict):
+        contract_id = contract.get("evidence_contract_id")
+        meta_contract_id = meta.get("evidence_contract_id")
+        if (
+            isinstance(meta_contract_id, str)
+            and bool(meta_contract_id.strip())
+            and contract_id != meta_contract_id
+        ):
+            errors.append(
+                "_meta.evidence_contract_id must match "
+                "_meta.evidence_contract.evidence_contract_id"
+            )
+
+        expected_contract_fingerprint = compute_evidence_contract_fingerprint(contract)
+        if (
+            is_sha256_fingerprint(contract_fingerprint)
+            and contract_fingerprint != expected_contract_fingerprint
+        ):
+            errors.append(
+                "_meta.evidence_contract_fingerprint mismatch: expected SHA-256 "
+                "of canonical _meta.evidence_contract"
+            )
+
+        declared_outcomes = contract.get("outcomes")
+        declared_outcome_ids = set()
+        if isinstance(declared_outcomes, list):
+            declared_outcome_ids = {
+                outcome.get("outcome_id")
+                for outcome in declared_outcomes
+                if isinstance(outcome, dict)
+            }
+        meta_outcome_id = meta.get("outcome_id")
+        if (
+            isinstance(meta_outcome_id, str)
+            and bool(meta_outcome_id.strip())
+            and meta_outcome_id not in declared_outcome_ids
+        ):
+            errors.append(
+                "_meta.outcome_id must name an outcome declared in "
+                "_meta.evidence_contract.outcomes"
+            )
 
     resolved_config = meta.get("resolved_config")
     if "resolved_config" in meta and not isinstance(resolved_config, dict):
@@ -301,6 +394,10 @@ def aggregate_seeds(
             entry["round"],
             entry["experiment_id"],
             entry["config_fingerprint"],
+            entry["evidence_contract_id"],
+            entry["evidence_contract_fingerprint"],
+            entry["outcome_id"],
+            entry["analysis_protocol_id"],
             entry.get("method"),
             entry.get("group"),
         )
@@ -312,6 +409,9 @@ def aggregate_seeds(
                 f"(round={entry['round']}, "
                 f"experiment_id={entry['experiment_id']!r}, "
                 f"config_fingerprint={entry['config_fingerprint']!r}, "
+                f"evidence_contract_id={entry['evidence_contract_id']!r}, "
+                f"outcome_id={entry['outcome_id']!r}, "
+                f"analysis_protocol_id={entry['analysis_protocol_id']!r}, "
                 f"method={entry.get('method')!r}, group={entry.get('group')!r}, "
                 f"seed={seed}) in {seen[identity]['file']} and {entry['file']}; "
                 "aggregate suppressed"
@@ -321,13 +421,41 @@ def aggregate_seeds(
         groups.setdefault(key, []).append(entry)
 
     aggregates: List[Dict[str, Any]] = []
-    for (rnd, experiment_id, config_fingerprint, method, group), items in sorted(
+    for (
+        rnd,
+        experiment_id,
+        config_fingerprint,
+        evidence_contract_id,
+        evidence_contract_fingerprint,
+        outcome_id,
+        analysis_protocol_id,
+        method,
+        group,
+    ), items in sorted(
         groups.items(),
         key=lambda item: (
-            item[0][0], item[0][1], item[0][2], str(item[0][3]), str(item[0][4])
+            item[0][0],
+            item[0][1],
+            item[0][2],
+            item[0][3],
+            item[0][4],
+            item[0][5],
+            item[0][6],
+            str(item[0][7]),
+            str(item[0][8]),
         ),
     ):
-        group_key = (rnd, experiment_id, config_fingerprint, method, group)
+        group_key = (
+            rnd,
+            experiment_id,
+            config_fingerprint,
+            evidence_contract_id,
+            evidence_contract_fingerprint,
+            outcome_id,
+            analysis_protocol_id,
+            method,
+            group,
+        )
         if group_key in duplicate_groups:
             continue
         seeds = sorted({e["seed"] for e in items})
@@ -389,6 +517,10 @@ def aggregate_seeds(
             "round": rnd,
             "experiment_id": experiment_id,
             "config_fingerprint": config_fingerprint,
+            "evidence_contract_id": evidence_contract_id,
+            "evidence_contract_fingerprint": evidence_contract_fingerprint,
+            "outcome_id": outcome_id,
+            "analysis_protocol_id": analysis_protocol_id,
             "method": method,
             "group": group,
             "n_seeds": len(seeds),
@@ -420,13 +552,19 @@ def collect_results(
                     "seed": nonnegative int or "aggregate",
                     "experiment_id": str,
                     "config_fingerprint": str,
+                    "evidence_contract_id": str,
+                    "evidence_contract_fingerprint": str,
+                    "outcome_id": str,
+                    "analysis_protocol_id": str,
                     "meta": dict,
                     "metrics": {key: value},
                 }
             ],
             "aggregates": [  # mean/std within one experiment/configuration
-                {"round", "experiment_id", "config_fingerprint", "method",
-                 "group", "n_seeds", "seeds", "files",
+                {"round", "experiment_id", "config_fingerprint",
+                 "evidence_contract_id", "evidence_contract_fingerprint",
+                 "outcome_id", "analysis_protocol_id", "method", "group",
+                 "n_seeds", "seeds", "files",
                  "metrics": {key: {"mean", "std", "n", "seeds", "files"}}}
             ],
             "warnings": [str]
@@ -436,6 +574,7 @@ def collect_results(
     entries = []
     aggregation_entries = []
     warnings = []
+    contract_identities: Dict[str, Dict[str, List[str]]] = {}
 
     def _filter_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
         if not metric_keys:
@@ -499,6 +638,13 @@ def collect_results(
         seed = meta["seed"]
         experiment_id = meta["experiment_id"]
         config_fingerprint = meta["config_fingerprint"]
+        evidence_contract_id = meta["evidence_contract_id"]
+        evidence_contract_fingerprint = meta["evidence_contract_fingerprint"]
+        outcome_id = meta["outcome_id"]
+        analysis_protocol_id = meta["analysis_protocol_id"]
+        contract_identities.setdefault(evidence_contract_id, {}).setdefault(
+            evidence_contract_fingerprint, []
+        ).append(rel_path)
 
         # Mode 1: Extract per-method rows from arrays
         method_rows = extract_method_rows(data)
@@ -517,6 +663,10 @@ def collect_results(
                     "seed": seed,
                     "experiment_id": experiment_id,
                     "config_fingerprint": config_fingerprint,
+                    "evidence_contract_id": evidence_contract_id,
+                    "evidence_contract_fingerprint": evidence_contract_fingerprint,
+                    "outcome_id": outcome_id,
+                    "analysis_protocol_id": analysis_protocol_id,
                     "method": row["method"],
                     "group": row["group"],
                     "meta": meta,
@@ -535,6 +685,10 @@ def collect_results(
                 "seed": seed,
                 "experiment_id": experiment_id,
                 "config_fingerprint": config_fingerprint,
+                "evidence_contract_id": evidence_contract_id,
+                "evidence_contract_fingerprint": evidence_contract_fingerprint,
+                "outcome_id": outcome_id,
+                "analysis_protocol_id": analysis_protocol_id,
                 "method": None,
                 "group": None,
                 "meta": meta,
@@ -544,6 +698,17 @@ def collect_results(
             filtered_top_metrics = _filter_metrics(top_metrics)
             if filtered_top_metrics:
                 entries.append({**top_entry, "metrics": filtered_top_metrics})
+
+    for contract_id, fingerprints in sorted(contract_identities.items()):
+        if len(fingerprints) > 1:
+            sources = "; ".join(
+                f"{fingerprint}: {', '.join(sorted(paths))}"
+                for fingerprint, paths in sorted(fingerprints.items())
+            )
+            warnings.append(
+                "Evidence Contract ID reused with multiple fingerprints "
+                f"({contract_id!r}); create a new versioned ID instead. {sources}"
+            )
 
     aggregates = aggregate_seeds(aggregation_entries, warnings)
     if metric_keys:
@@ -702,6 +867,9 @@ def format_markdown(collected: Dict[str, Any]) -> str:
             lines.append(
                 f"**{rnd_label} — {agg['experiment_id']} — {method_label}** "
                 f"(config={agg['config_fingerprint']}, "
+                f"contract={agg['evidence_contract_id']}, "
+                f"outcome={agg['outcome_id']}, "
+                f"analysis={agg['analysis_protocol_id']}, "
                 f"n_seeds={agg['n_seeds']}, seeds={agg['seeds']})"
             )
             lines.append("")
