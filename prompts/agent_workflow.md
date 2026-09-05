@@ -11,7 +11,7 @@ Classify the current request before research startup:
 - **Research execution:** Starting, continuing, or revising a research project follows the entrypoint Startup Protocol and the owning phase prompt. Honor a project explicitly selected by the user or current host context; do not ask them to select it again. Validate that selection under the current project's path and state rules.
 - **Explicit setup/reconfiguration:** Follow Phase 0, then return to the pending request. If no research execution was requested, finish without project discovery or an interview. Do not create a new project unless requested.
 
-For a mixed request, finish independent maintenance or read-only work while the research portion waits for a necessary decision. Do not turn a question or a request for a plan into execution approval.
+For a mixed request, finish independent maintenance or read-only work while the research portion waits for a necessary decision. Do not turn a question or a request for a plan into execution approval. When the available facts settle a read-only question, answer it and finish. Explain conditions for possible later execution without asking the user to authorize or choose unrequested follow-on work. Recovery decisions such as allocating a new run identity are required only when the user requests that execution.
 
 ## Authorization and Questions
 
@@ -23,7 +23,7 @@ Keep the phase-owned gates for selecting a research direction, approving a plan/
 
 Ask one focused question when a missing answer materially changes the outcome or required authority is absent. Prepare the evidence and proposal first when that preparation is already authorized. Continue useful independent work while waiting if the host supports it. Silence, elapsed time, and a missing answer are not approval. Do not invent extra approval gates from optional skill advice.
 
-Respect active locks, terminal project status, stop requests, stale kill flags, and corrupt-state recovery under `prompts/conventions.md`. Operational permission does not bypass those checks. External research discussion and code disclosure retain the separate exact gates in Phase 0 and Phase 5; an installed provider or skill is not consent.
+Respect active locks, terminal project status, stop requests, stale kill flags, and corrupt-state recovery under `prompts/conventions.md`. Operational permission does not bypass those checks. For a completed or archived project, report its terminal status and available artifacts, then finish; do not solicit reactivation or restart research unless the user explicitly requests a separate change. External research discussion and code disclosure retain the separate exact gates in Phase 0 and Phase 5; an installed provider or skill is not consent.
 
 ## Task Continuity
 

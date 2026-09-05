@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+- Codex and Claude Code share request routing, scoped approvals, continuation, delegation, and skill fallbacks through `prompts/agent_workflow.md`, with matching entrypoint research contracts and small host adapters.
+- Repository maintenance and read-only status no longer trigger research setup; exact existing approvals are recognized without waiving scientific decisions or external-code privacy gates.
+- Experiment setup and launch authorization are explicit, independent review remains required for evidence-producing code, and fresh-session advice depends on actual context pressure.
+
+### Added
+- Structural host-parity checks and synthetic workflow scenarios with a documented cross-host validation procedure. These checks do not establish equivalent model performance.
+
 ## [2026-07-11]
 
 ### Added

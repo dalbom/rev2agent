@@ -71,7 +71,7 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 3. **If projects exist**: Use the project explicitly selected by the user or current host context. Otherwise list them with a brief status summary and ask whether to resume one or start a new project. A selected project must still pass the path, state, and terminal-status checks below.
 4. **If resuming**: Read that project's `.research_state.json`. **Check `project_status` before dispatching on `phase_status`** and before creating a session lock:
    - If `project_status` is `"completed"`, report final artifacts and do not advance.
-   - If `project_status` is `"archived"`, report that it is archived and do not mutate or advance.
+   - If `project_status` is `"archived"`, report that it is archived and do not mutate or advance. Finish the status response without soliciting reactivation; a later explicit reactivation request is a separate task.
    - Only when `project_status` is `"active"`, follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, then determine the current phase and dispatch on `phase_status`:
       - `not_started`: read that phase's prompt file and begin the phase.
       - `in_progress`: check whether the process is still running; update state accordingly.

@@ -271,7 +271,7 @@ Every checkpoint under `{project_dir}/experiment/checkpoints/{run_dir}/` and eve
 
 `{project_dir}/experiment/results/{round_dir}/ALL_COMPLETE` is the only round-level completion marker. It records every expected experiment-ID/seed pair, fingerprint, and validated run marker, and is written only after all expected seed-scoped `COMPLETED` markers pass validation.
 
-Resume only when the stored `config_fingerprint` is an exact match for the newly resolved `config_fingerprint` and the checkpoint's recorded seed matches the requested seed. A `COMPLETED` marker may be used to skip a run only under the same checks. On any mismatch, refuse to resume or skip, preserve the old artifact, and report **config drift**; require a new experiment ID/path or explicit user resolution. Never silently overwrite a mismatched checkpoint or marker.
+Resume only when the stored `config_fingerprint` is an exact match for the newly resolved `config_fingerprint` and the checkpoint's recorded seed matches the requested seed. A `COMPLETED` marker may be used to skip a run only under the same checks. On any mismatch, refuse to resume or skip, preserve the old artifact, and report **config drift**; require a new experiment ID/path or explicit user resolution before execution. For a read-only question about reuse, explain the mismatch and these future execution conditions without soliciting a new run or approval. Never silently overwrite a mismatched checkpoint or marker.
 
 ## Sub-tasks (via Task Subagents)
 
