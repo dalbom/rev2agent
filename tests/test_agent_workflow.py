@@ -58,6 +58,17 @@ class TestSharedAgentWorkflow(unittest.TestCase):
             with self.subTest(contract=heading):
                 self.assertEqual(section(entrypoints[0], heading), section(entrypoints[1], heading))
 
+    def test_missing_selected_project_does_not_fall_through_to_interview(self):
+        for filename in ("AGENTS.md", "CLAUDE.md"):
+            with self.subTest(host=filename):
+                routing = section((ROOT / filename).read_text(encoding="utf-8"), "Phase Routing")
+                code = routing.split("```", 2)[1]
+                self.assertIn("if user picks existing project", code)
+                self.assertIn("elif no projects found", code)
+                self.assertLess(code.index("if user picks existing project"), code.index("elif no projects found"))
+                missing = code.split("elif no projects found:", 1)[1].split("else:", 1)[0]
+                self.assertNotIn("start Phase 1", missing)
+
     def test_shared_contract_has_explicit_owners_for_each_behavior(self):
         workflow = self.workflow()
         for heading in SECTIONS:

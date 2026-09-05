@@ -99,14 +99,19 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 ## Phase Routing
 
 ```
-if no projects found:
-    -> start Phase 1
-elif user picks existing project:
-    -> set project_dir from that project's state
+if user picks existing project:
+    -> validate the selected path and state under the Startup Protocol
+    -> if missing or invalid, report the issue; do not create a replacement
+    -> check project_status and applicable lock rules before phase dispatch
+    -> set project_dir from the validated state
     -> read current_phase from {project_dir}/.research_state.json
     -> read prompts/{current_phase_file}
 elif user starts new project:
     -> start Phase 1
+elif no projects found:
+    -> report that no existing project is available and ask for the intended task
+else:
+    -> list valid projects and ask which to resume or whether to start new
 ```
 
 **Iterative experiment loop (Phase 4 -> 5 -> 6 -> ...):**

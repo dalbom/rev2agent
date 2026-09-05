@@ -5,7 +5,7 @@ This is an implementation-validation record, not a research-quality or model-per
 ## Repository validation
 
 - Pre-update release baseline: 192 standard-library tests passed.
-- Candidate release: 200 standard-library tests passed, including eight new structural/host-parity tests. Script byte compilation and `git diff --check` passed.
+- Candidate release: 201 standard-library tests passed, including nine new structural/host-parity tests. Script byte compilation and `git diff --check` passed.
 - Independent review checked prompt authority, scientific approvals, external-code privacy, terminal status, fallback independence, and verification ordering. Reported issues were corrected before handoff.
 - The existing collector test deliberately emits a fail-on-warnings diagnostic; the suite exits successfully.
 
@@ -23,6 +23,8 @@ The first exploratory batch used different route labels and omitted one field de
 
 No private research projects, configuration credentials, manuscript, or source scripts were supplied. Only explicitly selected prompt Markdown and synthetic scenarios were included; evaluator expectations were withheld. Claude used safe mode and disabled tools. Codex used a read-only sandbox with user configuration, host-skill discovery, memory, hooks, plugins, external apps, shell, browser, delegation, and other side-effect capabilities disabled for the probe; event output contained no tool calls. The CLI host still supplies its own base instructions, so this is not a pure-model comparison.
 
+The final integration review also found a stale no-project fallback in the routing pseudocode. Both entrypoints now validate an explicitly selected project before the empty-list fallback; a new structural regression test covers this correction. The live probes above preceded that final consistency correction.
+
 ## Remaining acceptance work
 
 - Renew the local Claude login and rerun the same fixed scenarios on the requested Fable model, recording the actual model if reported.
@@ -36,7 +38,7 @@ Keep the PR as a draft while the required cross-host evidence remains pending. A
 
 Raw inputs, output events, final responses, fixture snapshots, CLI arguments, and per-file hashes are retained locally under the repository's common Git directory in `task-backups/2026-09-05-cross-host-workflow/probes/`. They are not repository deliverables. The reproducible public procedure and scenario fixture live in [cross-host-validation.md](cross-host-validation.md) and [scenarios.json](../tests/fixtures/workflow/scenarios.json).
 
-Final candidate prompt hashes (the full set is in the local metadata):
+Last executed candidate probe hashes (before the final routing-pseudocode consistency correction; the full set is in the local metadata):
 
 - `AGENTS.md`: `4b5227d539d6fe40bffbd682d28c767ab6b090157e8966ed8973a8d3b04d8c02`
 - `prompts/agent_workflow.md`: `00cf43cf5a4e9de2b5bb9edb8765c4d627502d10ce9bcd1a661c84cd531fe3f0`
