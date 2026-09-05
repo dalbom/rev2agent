@@ -1,23 +1,26 @@
 # New Session at Phase Boundaries
 
-Because all phase outputs are persisted to files (`.research_state.json`, `summaries/`, `research_roadmap.md`, experiment results), the conversation history is fully reconstructable from disk. Starting a new session at phase boundaries is preferred over carrying forward a large summarized context because:
-
-1. **No information loss** — a new session reads state files directly instead of relying on condensed conversation history.
-2. **Lower context load** — a new session only reads the files it needs.
-3. **Clean context** — no accumulated noise from previous phases.
+Persist phase outputs in `.research_state.json`, summaries, the roadmap, and
+experiment artifacts so a new session can reconstruct the work. Summaries must
+also preserve approval scope, decisions, unresolved questions, and next steps;
+files do not automatically capture everything from a conversation. Continue
+authorized work in the current session by default under
+`prompts/agent_workflow.md`.
 
 ## When to Recommend
 
-**Recommend starting a new session before proceeding when ALL of these are true:**
+**Recommend a new session only when ALL of these are true:**
 1. The current phase's summary file(s) have been written.
 2. `.research_state.json` is updated.
 3. `research_roadmap.md` is updated (Phase 5/6 only).
-4. The next phase's prompt file has NOT yet been read.
-5. This phase accumulated substantial tool results (experiment logs, subagent outputs, literature search results, etc.).
+4. No active debugging, in-flight work, or incomplete handoff depends on the
+   current conversation.
+5. There is observed context pressure or repeated loss of relevant instructions
+   or evidence. A long transcript or phase number alone is insufficient.
 
 ## High-Value Transitions
 
-Almost always recommend at these boundaries:
+These boundaries can be useful if the conditions above actually hold:
 
 - **Phase 2 → 3** — a deep literature search accumulates substantial tool results (web searches, parallel agent outputs, credibility scoring); everything needed lives in `phase2_literature.md` and `literature/`.
 - **Phase 5 → 6** — experiment execution logs and subagent outputs are typically the largest.
@@ -27,15 +30,18 @@ Almost always recommend at these boundaries:
 
 ## Skip for Lightweight Transitions
 
-Skip at 0→1, 1→2, 3→4, 4→5, 8→7: the conversation is short and starting a new session is not justified.
+Usually skip at 0→1, 1→2, 3→4, 4→5, 8→7. Assess the actual context rather than
+assuming a transition is heavy or lightweight from its number.
 
 ## How to Recommend
 
-At a qualifying transition, fold the recommendation into the existing confirmation prompt:
+At a qualifying transition, include an optional recommendation in the status
+update or an already-required scientific confirmation. It is not a new approval
+gate and does not stop work that is already authorized:
 
 > Phase N complete. Summary, state, and roadmap are written.
-> This phase accumulated large tool results — **recommend starting a new session** before Phase N+1.
-> Start a fresh session in this repository and say "continue [project_name]", or say "continue" here to proceed in this session.
+> [Observed context issue] makes a fresh session useful before Phase N+1.
+> To switch, start a fresh session in this repository and say "continue [project_name]". Otherwise I will continue the authorized work here.
 
 The new session will follow the Startup Protocol, detect the project, read `.research_state.json`, and resume at the correct phase.
 

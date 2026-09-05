@@ -6,6 +6,11 @@ Write a complete manuscript draft in LaTeX, ready for submission to the target v
 ## Mode
 **Task (subagents)** for parallel section writing, then **direct** for integration and review.
 
+Follow `prompts/agent_workflow.md` for bounded delegation and scoped approval.
+Batch section writers within host limits, with separate output files; direct
+sequential writing is available when delegation is not. Retain the independent
+review requirement for claim reproduction in Step 5.
+
 ## Current Round Results
 
 Read `current_round` and `current_round_short_name` from `.research_state.json`, require a nonempty short name, and define the Phase 6 result directory once:
@@ -285,7 +290,11 @@ Available context:
 
 ## Step 4: Quality Gates (MANDATORY)
 
-After all subagents return their sections but before integration, run these three quality gates in sequence. Each gate must pass before proceeding to the next: Automated Validation → Targeted Web Verification → Humanizer Pass.
+After all section outputs are ready but before integration, run Automated
+Validation, resolve flagged entries through Targeted Web Verification, and
+repeat the validation gate until it passes. Only then perform the Humanizer
+Pass. A failing validation result permits diagnosis and repair, not presentation
+of an unverified draft or bypassing the gate.
 
 **Why citation gates matter:** Fabricated or incorrect references are unacceptable in academic work. LLMs are known to hallucinate citation details (wrong titles, wrong authors, wrong venues, wrong page numbers, or entirely nonexistent papers). A single fabricated reference can result in desk rejection, loss of credibility, and accusations of academic misconduct. These are non-negotiable quality gates that MUST complete before presenting any draft to the user.
 
@@ -324,7 +333,10 @@ The citation verifier requires each identity source (DOI, Crossref, or Semantic 
 
 Web-verify ONLY the entries the script marked `SUSPICIOUS` or `UNVERIFIED` in Step 4.1 — entries the script verified do not need a second manual pass.
 
-For each flagged entry, use a Task subagent with web search access to check against an authoritative source (DBLP, Crossref, Semantic Scholar, ACM DL, IEEE Xplore, arXiv, or the publisher's website):
+For flagged entries, use bounded tasks with separate verification outputs when
+delegation helps, or verify directly with web search. Check against an
+authoritative source (DBLP, Crossref, Semantic Scholar, ACM DL, IEEE Xplore,
+arXiv, or the publisher's website):
 - Title: exact match (including capitalization nuances)
 - Authors: all authors listed, names spelled correctly
 - Venue: correct conference/journal name, correct year
@@ -333,12 +345,12 @@ For each flagged entry, use a Task subagent with web search access to check agai
 
 **Handling:**
 - `SUSPICIOUS` (metadata mismatch) → MUST be fixed to match the authoritative source, or removed from `references.bib` and the citing text.
-- `UNVERIFIED` (script could not confirm the entry exists) → needs manual web confirmation; if it cannot be confirmed against any authoritative source, remove it. If in doubt, ask the user before keeping it.
+- `UNVERIFIED` (script could not confirm the entry exists) → needs manual web confirmation; if it cannot be confirmed against any authoritative source, remove it. Ask for missing source evidence when necessary; user approval alone does not verify a citation.
 - **Never guess or reconstruct** citation details from memory. Always look them up.
 
 Save the verification report (each flagged entry → resolution) to `{project_dir}/manuscript/reference_verification.txt`.
 
-**Gate loop:** after fixing/removing entries, re-run Step 4.1. Repeat until all gates pass. **Maximum 5 attempts.** If gates still fail after 5 rounds, present the remaining issues to the user for manual resolution. Only then proceed.
+**Gate loop:** after fixing/removing entries, re-run Step 4.1. Repeat until all gates pass. **Maximum 5 attempts.** If gates still fail after 5 rounds, preserve the draft and diagnostics and present the remaining issues to the user for manual resolution. Proceed only after the required gates pass; an attempt limit does not waive verification.
 
 ### Step 4.3: Humanizer Pass
 

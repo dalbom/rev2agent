@@ -17,8 +17,11 @@ Direct conversation with the user.
   or has an invalid security setting.
 - The user requests reconfiguration.
 
-Security migration happens before project discovery or phase routing. A config
-file's existence alone is not proof that setup is safe or complete.
+Apply request routing in `prompts/agent_workflow.md` first. Repository
+maintenance does not enter setup merely because the config is missing. For
+research startup, security migration happens before project discovery or phase
+routing. A config file's existence alone is not proof that setup is safe or
+complete.
 
 ## Design Principle
 
@@ -166,7 +169,11 @@ Code verification:
 Configuration saved. Type "reconfigure" to change these settings.
 ```
 
-Then proceed to Phase 1.
+Then return to the pending request. For a setup-only or reconfiguration
+request, report completion without research discovery or project selection.
+Return to the Startup Protocol only when research execution is pending; resume
+an explicitly selected existing project when appropriate, and enter Phase 1
+only for a new project.
 
 ## Secure Config Write Protocol
 
@@ -268,4 +275,7 @@ present.
 ## State Update
 
 Phase 0 does not create `.research_state.json`. It writes or migrates only
-`.rev2agent_config.json`, then returns to the Startup Protocol.
+`.rev2agent_config.json`, then returns to the pending request under
+`prompts/agent_workflow.md`. Use the Startup Protocol only when research
+execution is pending; setup-only and reconfiguration requests end without
+project discovery.

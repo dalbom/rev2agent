@@ -11,7 +11,13 @@ Search the literature broadly, identify promising research gaps, and narrow down
 
 ## Agent Structure
 
-Spawn 4 independent subagents in **two waves**, each working independently and writing its findings to a file. No inter-agent messaging is needed — the lead reads all output files after agents complete.
+Cover 4 research roles in **two waves**, with each role writing its own findings
+file. Use bounded host-native subagents when available, following
+`prompts/agent_workflow.md`; batch them within host concurrency limits. If
+delegation is unavailable, perform the roles sequentially and report that they
+were not independent agents. Preserve every role's output and the wave
+dependency below. No inter-agent messaging is needed — the lead reads the
+output files before synthesis.
 
 - **Wave 1 (parallel):** survey-agent, frontier-agent, baseline-agent.
 - **Wave 2 (after wave 1 completes):** gap-agent, spawned with the wave-1 output file paths as input — it cross-references their findings, so it cannot run in parallel with them.
@@ -53,7 +59,11 @@ In file names below, `{role}` is the agent name without the `-agent` suffix: `su
 
 ### Coordination
 
-The lead spawns wave 1 (survey-agent, frontier-agent, baseline-agent) in parallel. When all three have completed, the lead spawns gap-agent (wave 2) with the wave-1 output file paths as input. After gap-agent completes, the lead reads all output files and synthesizes findings.
+The lead completes wave 1 (survey-agent, frontier-agent, baseline-agent), in
+parallel where supported. Only after all three outputs are available does the
+gap-agent role begin with those file paths as input. The lead then reads all
+four outputs and synthesizes findings. While workers run, the lead may inspect
+shared inputs or prepare synthesis criteria without repeating their searches.
 
 ## Spawn Prompts
 
@@ -85,17 +95,20 @@ For gap-agent (wave 2), additionally include the wave-1 output file paths in the
 
 ### Deep Research Integration
 
-**Before launching the agents**, if the `research-deep-dive` skill is available, use it on the broad topic to conduct a comprehensive multi-source literature analysis. Otherwise, use web search to manually research the area with multiple parallel queries. Either approach provides:
-- 10+ verified sources with citation tracking
-- Comparison of competing approaches
-- Identification of research gaps and trends
-- A structured research report with verified claims
-
-Use the research output as the **seed knowledge base** for the agents. Share the research report with all agents in their spawn prompts so they can build on verified findings rather than starting from scratch.
+Reuse verified seed papers and relevant prior literature artifacts first. If
+orientation is missing, make a focused search sufficient to scope the roles;
+do not duplicate their full literature search before launching them. Use the
+`research-deep-dive` wrapper or its manual fallback from
+`prompts/agent_workflow.md` for the role-based research itself. Share verified
+sources with the roles, while allowing each to search for contrary evidence.
+The combined role outputs and lead synthesis provide the multi-source report,
+citation tracking, comparisons, and gap analysis.
 
 ### Parallel Search Protocol
 
-Each agent should execute multiple searches concurrently for maximum coverage. Launch 5-10 independent searches in a single message using the host's web search tool.
+Each agent should batch independent searches within the host tool's query and
+concurrency limits. Split a larger query set into supported batches; preserve
+the effort caps below and read results before choosing dependent follow-ups.
 
 **Query decomposition — break the research topic into orthogonal search angles:**
 
@@ -111,13 +124,13 @@ Each agent should execute multiple searches concurrently for maximum coverage. L
 **Example parallel execution (single message, multiple tool calls):**
 
 ```
-[Launch ALL of these simultaneously]
-web_search("survey {topic} 2024 2025")
-web_search("site:arxiv.org {topic} {specific_method} 2025")
+[Batch independent queries within the available tool limits]
+web_search("survey {topic} {previous_year} {current_year}")
+web_search("site:arxiv.org {topic} {specific_method} {current_year}")
 web_search("{topic} limitations challenges failure")
 web_search("{topic} benchmark SOTA leaderboard")
 web_search("{topic} {alternative_approach} comparison")
-web_search("CVPR NeurIPS ICLR 2025 {topic}")
+web_search("CVPR NeurIPS ICLR {current_year} {topic}")
 ```
 
 Deep-dive analysis of the found papers is handled by the four role agents specified in **Agent Structure** above — do NOT spawn a separate, additional set of deep-dive agents.

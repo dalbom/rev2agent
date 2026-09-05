@@ -6,6 +6,19 @@ Set up the environment, download data, write all experiment scripts, and launch 
 ## Mode
 **Task (subagents)** for parallel setup work, then **direct execution** for launching experiments.
 
+## Execution Authority
+
+Apply `prompts/agent_workflow.md`. Before launch, read the approval scope in
+the Phase 4 summary (or the Phase 6 summary for an identical-config skip) and
+the current user instruction. Continue setup and launch without another
+confirmation only when execution of this matrix within its resource limits is
+already authorized. Setup-only approval permits preparation, not launch.
+Missing or ambiguous launch authority requires one focused confirmation after
+the verified setup is ready; do not reinterpret old approval. A material
+change to the matrix, method, data, or resource limits returns to the owning
+approval gate. Routine fixes within the approved protocol retain authority
+and still pass code verification before execution.
+
 ## Round Identity and Paths (MANDATORY)
 
 Before setup, resume checks, or execution, read `.research_state.json` and require `current_round > 0`. `current_round_short_name` must be nonempty before any execution work. If the `current_round_short_name` key is absent, STOP and run the legacy migration in `prompts/conventions.md`. If the key is present with value `""`, STOP without migration: Phase 4 has not persisted the round name, so return to the owning phase instead of guessing.
@@ -21,7 +34,7 @@ Create one `run_dir` for every experiment ID and seed. Run artifacts are scoped 
 
 ## Code Verification Protocol (MANDATORY)
 
-**Every experiment script MUST pass this 3-step verification before execution.** No exceptions. This protocol was established after a silent methodology failure where executable code evaluated mismatched evidence and produced incorrect conclusions.
+**Every experiment script MUST pass this 3-step verification before execution**, subject only to the pure-rendering exception in Scope below. This protocol was established after a silent methodology failure where executable code evaluated mismatched evidence and produced incorrect conclusions.
 
 ### Scope
 
@@ -31,9 +44,22 @@ Verification applies to ALL scripts that produce or compute values used in the m
 
 Scripts that ONLY read pre-computed results from JSON/CSV and render them (pure plotting) are exempt from Step 1 but still require Step 2.
 
+Ordinary repository maintenance and operational helpers that neither implement
+the experiment protocol nor compute manuscript-facing values use the
+proportional validation policy in `prompts/agent_workflow.md`. Their location
+alone does not determine scope. A runner's data selection, configuration,
+checkpoint reuse, and result identity affect the protocol and remain in scope.
+
 ### Step 1: Logical Flow Verification
 
 Before running any experiment script, use an independent adversarial reviewer to verify that the code implements the intended experimental protocol. This catches methodology bugs that ordinary code review cannot — bugs where the code runs perfectly but tests the wrong thing.
+
+Use an isolated reviewer with the contract and relevant code, without the
+implementer's reasoning or prior verdicts. Follow the delegation rules in
+`prompts/agent_workflow.md`. If no isolated reviewer is available, a sequential
+self-review is preliminary and cannot satisfy this independent gate. Preserve
+the prepared code and report the missing review capability; do not execute
+evidence-producing code or claim an independent PASS.
 
 The mandatory default is a **host-native adversarial reviewer**. Sending unpublished code to an external provider is permitted only when both conditions hold:
 
@@ -80,7 +106,11 @@ Report: PASS (no logical issues) or FAIL (describe the issue).
 
 ### Step 2: Code Quality Review (`code-quality-review` skill)
 
-After logical verification passes, apply the `code-quality-review` skill for code quality: unused imports, duplication, variable shadowing, memory efficiency, magic numbers.
+After logical verification passes, apply the `code-quality-review` wrapper or
+its explicit manual fallback in `prompts/agent_workflow.md` for code quality:
+unused imports, duplication, variable shadowing, memory efficiency, magic
+numbers. If this pass changes behavior, repeat logical verification for the
+affected code before execution.
 
 ### Step 3: Execution
 
@@ -91,7 +121,11 @@ Only after Steps 1-2 pass:
 
 ### Automatic Enforcement
 
-**This protocol is NOT optional.** It runs automatically every time an experiment script is written or modified, without waiting for user instruction. Never skip Steps 1-2 even if the code "looks correct." The Round 5 incident proved that correct-looking code can be silently wrong.
+**This protocol is NOT optional.** Apply its Scope whenever an experiment
+script is written or modified, without waiting for user instruction. For code
+requiring logical verification, never skip Steps 1-2 even if it "looks correct."
+The pure-rendering exception above remains limited to Step 1. The Round 5
+incident proved that correct-looking code can be silently wrong.
 
 ## Semantic Naming (MANDATORY)
 
@@ -256,7 +290,11 @@ The setup subagents work independently, so they must share a single interface de
 
 ### Spawn Ordering
 
-Tasks 1-5 and 7 may run in parallel. **Task 6 (run_all.sh) is spawned only AFTER Tasks 3-5 complete**, because it must call the actual CLIs of the scripts those tasks produced — pass the finished scripts' real invocations (not the contract alone) into the Task 6 prompt.
+Tasks 1-5 and 7 may run in parallel when their file ownership and dependencies
+are independent. Use bounded workers within host concurrency limits, or
+perform setup tasks directly, under `prompts/agent_workflow.md`. Workers write
+their assigned outputs only; the main agent owns state and experiment launch.
+**Task 6 (run_all.sh) is spawned only AFTER Tasks 3-5 complete**, because it must call the actual CLIs of the scripts those tasks produced — pass the finished scripts' real invocations (not the contract alone) into the Task 6 prompt.
 
 ### Task 1: Environment Setup
 ```
@@ -439,12 +477,21 @@ Set up experiment monitoring:
 
 Once all subagents have finished:
 
-1. **Apply the Code Verification Protocol** (defined at the top of this file) to every newly written script: train.py, evaluate.py, status.py, baseline runners, and any model/utility modules. Steps 1-2 of the protocol (independent logical review + code-quality review) are mandatory before any script runs. Step 1 uses a host-native adversarial reviewer unless the explicit external-code-review privacy gate passes.
-2. **Dry run** the training script for 1 iteration to catch import/shape errors that static review cannot.
+1. **Apply the Code Verification Protocol** (defined at the top of this file)
+   to every new or modified experiment script and its protocol-relevant
+   dependencies, including training, evaluation, baseline runners, and model
+   or utility modules. Apply the documented pure-rendering exception and
+   ordinary-maintenance scope by behavior. Required Steps 1-2 (independent
+   logical review + code-quality review) pass before execution. Step 1 uses a
+   host-native adversarial reviewer unless the explicit external-code-review
+   privacy gate passes.
+2. Complete **syntax and static checks** within the preparation scope. Defer
+   training/evaluation execution, including a one-iteration dry run, until
+   Step 5 establishes launch authority and passes the process-safety checks.
 3. **Present** the complete setup to the user:
 
 ```
-✅ Experiment Setup Complete
+Experiment Setup Reviewed — Training Smoke Check Pending
 ─────────────────────────────
 Environment: research-{project_dir} (micromamba)
 Datasets: [list with sizes]
@@ -471,9 +518,19 @@ To monitor:
 Estimated total time: [X] hours on [GPU name]
 ```
 
-4. Ask: **"Everything is set up. Shall I start the experiments now? Once started, you can close this session and come back later — I'll pick up where things left off."**
+4. Check **Execution Authority** above. If launch is already authorized and
+   scope is unchanged, report that static and independent review passed and
+   continue. Otherwise ask once: **"The setup has passed static and independent
+   review. Do you approve the training smoke check and experiment execution
+   within the stated resource limits?"** Wait for that answer before either
+   execution; preparation within the approved scope may continue.
 
-5. If confirmed, start the experiments:
+5. With launch authority and all verification, kill-flag, and single-runner
+   checks satisfied, **dry run** the training script for 1 iteration to catch
+   import/shape errors. Use separate temporary outputs; the smoke check must
+   not produce canonical results or completion markers. Only after it passes
+   and its process has exited, recheck the kill flag and single-runner rule
+   before starting the full experiment runner:
    ```bash
    cd {project_dir}/experiment
    RUN_TS=$(date -u +%Y%m%dT%H%M%SZ)
@@ -482,7 +539,9 @@ Estimated total time: [X] hours on [GPU name]
    echo $! > logs/{round_dir}/run_all.pid
    ```
 
-6. Inform the user:
+6. Verify the launched process and persist the launch state below, then inform
+   the user. Offer closing the session only after confirming the runner can
+   continue independently of it:
    ```
    🚀 Experiments started (PID: XXXXX)
 
