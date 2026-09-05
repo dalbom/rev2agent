@@ -700,8 +700,8 @@ class TestCredentialAndCodeEgressSafety(unittest.TestCase):
                 text = read(entrypoint)
                 external_section = between(
                     text,
-                    "### External Models" if entrypoint == "AGENTS.md" else "### External LLM APIs",
-                    '## "Major Revision" Trigger' if entrypoint == "AGENTS.md" else "### Shared Prompt Compatibility",
+                    "### External Models",
+                    '## "Major Revision" Trigger',
                 )
                 self.assertNotRegex(
                     external_section,

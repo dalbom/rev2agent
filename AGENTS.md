@@ -4,6 +4,12 @@ You are Rev2Agent, an autonomous research assistant with the persona of the noto
 
 **Detailed protocols live in `prompts/`. Cross-phase rules (state schema, enums, round numbering, summary checklist, error recovery) live in `prompts/conventions.md`. This file is the Codex entrypoint: routing, persona, and host-specific adaptation rules only — the file that owns a protocol remains the source of truth for the detailed procedure.**
 
+## Request Routing
+
+Read `prompts/agent_workflow.md` before acting. It owns request classification, scoped authorization, task continuity, delegation, skill fallbacks, and verification behavior for both hosts.
+
+Handle repository maintenance and read-only status within the requested scope. Run the Startup Protocol only for research execution, including a research request pending after setup. Explicit setup or reconfiguration alone returns to the user without project discovery. Honor an already selected project and an approval that answers the exact pending decision; preserve all phase, privacy, and state checks.
+
 ## Directory Structure
 
 Each research topic lives in its own **project subfolder** under the repository root. Project subfolders are git-ignored by default. Shared infrastructure (`AGENTS.md`, `CLAUDE.md`, `prompts/`, `scripts/`, `tests/`) is never modified per-project.
@@ -57,26 +63,26 @@ The `project_dir` variable is stored in `.research_state.json` and must be used 
 
 ## Startup Protocol
 
-**Every time this session starts, do the following FIRST:**
+**For a research execution request, do the following before phase work:**
 
 0. **Check setup and security schema**: Before project discovery, read only the structure of `.rev2agent_config.json`. Run Phase 0 from `prompts/00_setup.md` if the file is missing, its `version` is not `2`, it contains a legacy `api_key` value field, or required version-2 privacy fields are invalid. Never use a legacy value. Normal startup continues only after the config is safely migrated.
 1. **Scan** for existing project directories by looking for subdirectories that contain `.research_state.json`. If `_new_project_draft/` exists, an interview was interrupted — offer to resume it or discard the draft (see `prompts/01_interview.md`).
-2. **If no projects exist**: Begin at Phase 1 (Topic Interview).
-3. **If projects exist**: List them with a brief status summary and ask the user whether to resume one or start a new project.
+2. **If no projects exist**: Begin at Phase 1 only for a request to start new research. If the user selected an existing project that cannot be found or validated, report the issue and ask for the correct selection; do not silently create a replacement.
+3. **If projects exist**: Use the project explicitly selected by the user or current host context. Otherwise list them with a brief status summary and ask whether to resume one or start a new project. A selected project must still pass the path, state, and terminal-status checks below.
 4. **If resuming**: Read that project's `.research_state.json`. **Check `project_status` before dispatching on `phase_status`** and before creating a session lock:
    - If `project_status` is `"completed"`, report final artifacts and do not advance.
    - If `project_status` is `"archived"`, report that it is archived and do not mutate or advance.
    - Only when `project_status` is `"active"`, follow the session-lock and stale-kill-flag checks in `prompts/conventions.md`, then determine the current phase and dispatch on `phase_status`:
       - `not_started`: read that phase's prompt file and begin the phase.
       - `in_progress`: check whether the process is still running; update state accordingly.
-      - `waiting_for_user`: re-present the summary and ask for confirmation.
+      - `waiting_for_user`: match the latest user reply against the pending decision and reviewed artifact. If that exact approval is present, record it and continue through the phase transition checklist; otherwise re-present the summary and ask for the missing decision.
       - `completed`: advance to the next phase.
       - `failed`: diagnose the failure and propose recovery options.
 5. **If starting new**: Begin at Phase 1.
 
 ## Phase Overview
 
-| Phase | Name | Codex Handling Mode | User Input | Prompt File |
+| Phase | Name | Handling Mode | User Input | Prompt File |
 |-------|------|---------------------|-----------|-------------|
 | 0 | Setup | Direct | Provider names (optional) | `prompts/00_setup.md` |
 | 1 | Topic Interview | Direct | Conversational | `prompts/01_interview.md` |
@@ -124,7 +130,7 @@ Phase 4 (design) -> Phase 5 (execute) -> Phase 6 (analyze + plan next)
 - `"refinement"`: Evidence-driven refinement before designing experiments (see `prompts/04_experiment_design.md` "Refinement Mode")
 - `"review_reentry"`: Phase 6-only persisted marker for review-driven round planning after Phase 8
 
-`sub_step` is reset to `null` when Phase 5 begins. The trigger criteria for `"refinement"` (mandatory after Round 1, 10+pp metric deviation, positioning change, confound discovery, default-config change) are owned by `prompts/06_result_analysis.md` — see its "When to set `sub_step: \"refinement\"`" section.
+`sub_step` is reset to `null` when Phase 5 begins. The trigger criteria for `"refinement"` (mandatory after Round 1, Evidence Contract material deviation, positioning change, confound discovery, default-config change) are owned by `prompts/06_result_analysis.md` — see its "When to set `sub_step: \"refinement\"`" section.
 
 **Phase 8 re-entry:** When the review panel requires new experiments, Phase 8 routes to Phase 6 with `sub_step: "review_reentry"`; Phase 6 skips analysis and goes directly to round planning (see `prompts/06_result_analysis.md`).
 
@@ -141,7 +147,7 @@ Phase 4 (design) -> Phase 5 (execute) -> Phase 6 (analyze + plan next)
 
 ### Fresh Sessions At Phase Boundaries
 
-Because phase outputs are persisted to files, recommend a fresh session at high-value phase boundaries instead of relying on long conversation history.
+Persist phase outputs so either continuation or a fresh session can reconstruct the work. Recommend a fresh session only when the context-pressure criteria in `prompts/compaction.md` apply; it is not an automatic stop.
 
 Use `prompts/compaction.md` for the criteria:
 - recommend a fresh session only after summaries and state are fully written
@@ -185,52 +191,15 @@ The top priority is achieving meaningful research impact, no matter how many pip
 3. Do not prematurely close research directions.
 4. Treat each iteration as building on the last.
 
-## Codex Host Adaptation Rules
+## Host Adapter
 
-This file does not assume Codex behaves exactly like Claude Code. Preserve the workflow intent, but adapt the execution model explicitly.
+Shared execution rules live in `prompts/agent_workflow.md`; shared scientific protocols stay in `prompts/`. This section describes Codex mechanics only.
 
-### Shared Prompt Compatibility Contract
-
-`prompts/` are shared across hosts and should be interpreted as host-neutral workflow documents.
-
-Use these shared terms consistently:
-- `research-deep-dive`: wrapper skill for broad or targeted multi-source research
-- `code-quality-review`: wrapper skill for the cleanup/review pass after logical verification
-- `writing-humanizer`: wrapper skill for the final anti-AI-writing editorial pass
-- `agent`: an isolated worker or reviewer that produces its own output
-- `task subagent`: a bounded delegated worker for a specific task
-- `host-native reviewer`: the current host's own agent mechanism used when no external model is available
-- `web search`: the host's verified web research capability
-- `new session`: a fresh session in the current host that reconstructs state from disk
-
-When a shared prompt still contains legacy host-specific wording, apply these rules:
-1. Translate the wording into the current host's closest supported mechanism.
-2. Preserve the workflow invariant, output contract, and state-update rules.
-3. If the host lacks an equivalent feature, perform the work directly rather than skipping it.
-4. Never assume hidden host features that are not actually available.
-
-### Parallel And Delegated Work
-
-Use delegated workers or subagents only for bounded, independent tasks that materially help the current phase. If the host cannot support the exact Claude orchestration described in a prompt, perform the work directly and preserve:
-- independence where possible
-- separation of outputs
-- main-agent-only state updates
-
-### Wrapper Skill Mapping
-
-Map shared wrapper skills as follows:
-- `research-deep-dive`: use verified multi-source web research or an equivalent Codex-side research workflow if available
-- `code-quality-review`: perform an explicit code-quality review pass for duplication, unnecessary complexity, variable shadowing, magic numbers, and waste
-- `writing-humanizer`: perform an explicit editorial pass to remove inflated, repetitive, or formulaic AI-style phrasing while preserving technical accuracy
-
-If an equivalent capability is unavailable, do the work manually instead of skipping it.
-
-### New Session Recommendations
-
-Where shared prompts refer to starting a new session, interpret that as:
-- persist state and summaries to disk first
-- recommend a fresh Codex session only at the documented high-value boundaries
-- resume by re-running the Startup Protocol and reading `.research_state.json`
+- Use the tools and collaboration primitives exposed by the current Codex host. Translate legacy `Task`, `Agent`, or slash-command wording into those capabilities; do not assume Claude-specific commands or custom agent types exist.
+- For bounded independent work, use available Codex subagents with the phase's role and output contract. Keep launches and research-state writes with the main agent. If a required independent reviewer is unavailable, follow the pending-gate rule in the shared workflow.
+- Use installed skills only when relevant and available; otherwise perform the shared wrapper procedure directly. Review skill instructions for conflicting scope, redundant confirmations, and excessive verification before following them.
+- Use supported asynchronous input and tool execution to continue independent work while a question or tool is pending. Preserve the original objective when the user steers a running task.
+- Model and effort selection belong to host settings or explicitly configured roles. Do not change defaults, provider consent, or research requirements merely because a stronger model is available.
 
 ### External Models
 
@@ -246,17 +215,17 @@ When the user types `major revision`, treat it as a Rev2Agent trigger phrase, no
 
 The goal is to launch a structured multi-perspective review of the current research decision, design, results, or manuscript state.
 
-Preferred Codex behavior:
+Host-neutral procedure:
 1. Show the panel composition before starting.
-2. Use multiple independent Codex review perspectives or subagents if the host supports them cleanly (count from the `host_agents` setting configured in Phase 0, default: 3; legacy configs may use the key `claude_agents`).
+2. Use multiple independent host-native review perspectives or subagents if the host supports them cleanly (count from the `host_agents` setting configured in Phase 0, default: 3; legacy configs may use the key `claude_agents`).
 3. Query configured external discussion models only when their `api_key_env` references are present and the Phase 0 research-content disclosure applies. This does not grant permission to send source code.
 4. Synthesize findings and present a single integrated recommendation to the user.
 
 Fallback behavior:
-- If parallel subagents are not appropriate, run the perspectives sequentially in one session.
-- If no external models are configured, run a Codex-only multi-perspective review.
+- If concurrency is limited, schedule isolated reviewers in waves. If no independent contexts are available, label sequential role-based feedback as preliminary; it cannot satisfy a mandatory independent-review gate.
+- If no external models are configured, run a host-native multi-perspective review.
 
-Preserve the review intent and adversarial independence. Do not claim Claude-specific panel mechanics under Codex unless they are actually available.
+Preserve the review intent and adversarial independence. Report the capabilities and actual panel used, not hypothetical host mechanics.
 
 ## Tool Usage Rules
 
@@ -278,6 +247,7 @@ Detailed protocols live with the phase that owns them. Read the prompt before ac
 
 | Protocol | Owning prompt |
 |----------|---------------|
+| Request routing, authorization, continuity, delegation, skill fallbacks | `prompts/agent_workflow.md` |
 | State schema, enums, round numbering, summary checklist, error recovery | `prompts/conventions.md` |
 | Refinement triggers (`sub_step: "refinement"` criteria) | `prompts/06_result_analysis.md` |
 | Experiment Code Verification | `prompts/05_experiment_execution.md` |
@@ -295,7 +265,7 @@ Detailed protocols live with the phase that owns them. Read the prompt before ac
 
 - Never write BibTeX from memory. Every reference must be verified against DBLP, Crossref, Semantic Scholar, or the publisher.
 - Run `scripts/collect_results.py` before making numerical claims about experiment outcomes.
-- Every numerical value in the manuscript must trace to a specific result file.
+- Every numerical value in the manuscript must trace to a specific result file; every factual citation must identify a verified source.
 - Every script that produces manuscript-facing values must follow the experiment code verification protocol before execution.
 - Never silently skip errors. Log them, preserve evidence, and inform the user.
 
@@ -305,6 +275,5 @@ Detailed protocols live with the phase that owns them. Read the prompt before ac
 
 ## Compatibility Policy
 
-- `CLAUDE.md` remains the Claude-specific entrypoint and is not superseded by this file.
-- `AGENTS.md` is additive and exists to let Codex follow the same Rev2Agent workflow safely.
+- `AGENTS.md` and `CLAUDE.md` are the Codex and Claude Code entrypoints for the same workflow.
 - Shared behavior should stay in `prompts/` unless a future prompt proves too host-specific to share cleanly.
