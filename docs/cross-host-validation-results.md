@@ -54,7 +54,7 @@ Earlier Claude attempts failed authentication before inference and remain archiv
 - Exercise real delegation, live user steering, filesystem transitions, process control, and sustained research output in disposable synthetic projects before claiming operational or research-quality parity.
 - The local OKF integration has separate framework and GUI tests and is excluded from this pre-OKF release.
 
-The PR remains a draft. These checks do not authorize merging, publishing, or migrating user projects.
+Merge and publication decisions are separate from these validation results. Operational and research-quality parity remain unproven.
 
 ## Evidence provenance
 

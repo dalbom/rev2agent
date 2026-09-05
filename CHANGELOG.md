@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [2026-09-05]
 
 ### Changed
 - Codex and Claude Code share request routing, scoped approvals, continuation, delegation, and skill fallbacks through `prompts/agent_workflow.md`, with matching entrypoint research contracts and small host adapters.
