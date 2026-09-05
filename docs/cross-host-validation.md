@@ -16,14 +16,14 @@ See [the dated validation record](cross-host-validation-results.md) for executed
 
 ## Trial status and local capabilities
 
-The validation design inspected help/version output only. No model inference or performance comparison was run by that inspection.
+The capability inventory comes from local help/version output. Executed model probes and their limits are recorded separately in [the dated validation record](cross-host-validation-results.md).
 
 | Host | Locally observed CLI | Relevant supported options |
 |---|---|---|
 | Codex | `codex-cli 0.153.4` | `exec`, `--model`, `--sandbox read-only`, `--ignore-user-config`, `--skip-git-repo-check`, `--ephemeral`, `--json`, `--output-schema` |
-| Claude Code | `2.1.222` | `--print`, `--model`, `--effort`, `--safe-mode`, `--tools`, `--no-session-persistence`, `--output-format json`, `--json-schema` |
+| Claude Code | `2.1.261` (authenticated follow-up; initial inspection was `2.1.222`) | `--print`, `--model`, `--effort`, `--safe-mode`, `--tools`, `--no-session-persistence`, `--output-format stream-json`, `--json-schema` |
 
-This inventory is local evidence, not a guarantee for another installation. Recheck `codex exec --help`, `claude --help`, and both `--version` outputs before running trials. Claude's inspected help lists effort values `low`, `medium`, `high`, `xhigh`, and `max`; do not map Codex's effort settings to Claude by name alone. Availability of the requested model and actual resolved model remain unverified until a successful request provides evidence. Do not substitute a different model silently.
+This inventory is local evidence, not a guarantee for another installation. Recheck `codex exec --help`, `claude --help`, and both `--version` outputs before running trials. Claude's inspected help lists effort values `low`, `medium`, `high`, `xhigh`, and `max`; do not map Codex's effort settings to Claude by name alone. Verify the responding model in each trial's events when reported; an accepted request flag alone is not execution identity. Record auxiliary model usage separately without guessing its role. Do not substitute a different model silently.
 
 Claude's `--bare` mode disables OAuth/keychain reads and requires another supported authentication route. It is not a drop-in isolation flag for subscription users. `--safe-mode` disables automatic `CLAUDE.md` loading, so the trial must supply the selected entrypoint explicitly. Codex's `--ignore-user-config` still uses its configured authentication home; it does not by itself prove that all personal context has been isolated.
 
@@ -31,7 +31,7 @@ Claude's `--bare` mode disables OAuth/keychain reads and requires another suppor
 
 Compare two revisions for each host: the pre-update release baseline and the proposed release commit. Use the same scenario fixture revision and evaluator rubric for all four cells. If files are still uncommitted, record their SHA-256 hashes and dirty status; a commit ID alone does not identify the tested prompt.
 
-Use `tests/fixtures/workflow/scenarios.json`. All project names, decisions, metadata, and results there are synthetic. The fixture includes repository maintenance, approval reuse, missing scientific decisions, user steering, bounded review, unavailable independent reviewers, terminal projects, session ownership, verification, code privacy, and config identity.
+Use `tests/fixtures/workflow/scenarios.json`. All project names, decisions, metadata, and results there are synthetic. The fixture includes repository maintenance, approval reuse, missing scientific decisions, user steering, bounded review, unavailable independent reviewers, terminal projects, session ownership, verification, code privacy, config identity, and persisted round transitions. Preserve earlier fixture snapshots if adding regression cases after inspecting a response; those additions are development checks, not held-out evidence.
 
 For each scenario, assemble `input.txt` in this order:
 

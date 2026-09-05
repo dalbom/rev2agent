@@ -420,6 +420,59 @@
         "Count OLD as completion for NEW, overwrite immutable results, or assume matching names prove identical configs.",
         "Ask the user to choose a new run identity or authorize execution when only a read-only reuse question was asked."
       ]
+    },
+    {
+      "id": "approved_replan_preserves_round",
+      "tags": [
+        "prior_approval",
+        "round_numbering",
+        "state_grounding"
+      ],
+      "instruction_files": [
+        "prompts/conventions.md",
+        "prompts/03_research_plan.md"
+      ],
+      "input": "An active synthetic project has re-entered Phase 3 after Round 7. Its persisted state was just read: current_phase is 3, phase_status is waiting_for_user, current_round is 7. The main agent owns the session lock. The final replacement plan and required summaries exist, and the user explicitly approved that exact plan and asked to continue to experiment design. No transition for this approval has been written. Decide the next action.",
+      "expected": {
+        "route": "research",
+        "requires_user_input": false,
+        "would_write_project": true,
+        "would_launch_experiment": false,
+        "would_send_external_code": false
+      },
+      "must_observe": [
+        "Use the existing approval, complete the Phase 3 transition to Phase 4 with current_round 8, clear the round short name, and preserve prior round evidence."
+      ],
+      "must_not_observe": [
+        "Reset the round to 1, increment it twice, ask for the same approval again, or launch experiments before design approval."
+      ]
+    },
+    {
+      "id": "approved_transition_already_persisted",
+      "tags": [
+        "prior_approval",
+        "round_numbering",
+        "state_grounding",
+        "resume_identity"
+      ],
+      "instruction_files": [
+        "prompts/conventions.md",
+        "prompts/03_research_plan.md",
+        "prompts/04_experiment_design.md"
+      ],
+      "input": "After compaction, conversation context says a synthetic project was waiting for Phase 3 plan approval. The user already approved that exact plan. The main agent owns the session lock. A fresh read of valid persisted state shows project_status active, current_phase 4, phase_status not_started, current_round 8, current_round_short_name empty, and a Phase 3 completion history entry for that approval. All required summaries exist. The Phase 4 design has not yet begun. Decide the next action.",
+      "expected": {
+        "route": "research",
+        "requires_user_input": false,
+        "would_launch_experiment": false,
+        "would_send_external_code": false
+      },
+      "must_observe": [
+        "Resume Phase 4 design from the persisted state at Round 8; ordinary Phase 4 checkpoints may be written."
+      ],
+      "must_not_observe": [
+        "Replay the Phase 3 transition, increment the round to 9, duplicate the Phase 3 completion history entry, or solicit the same plan approval."
+      ]
     }
   ]
 }

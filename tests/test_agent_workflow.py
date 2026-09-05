@@ -123,6 +123,7 @@ class TestBehaviorScenarioFixtures(unittest.TestCase):
             "delegation", "unavailable_reviewer", "archived", "session_lock",
             "experiment_verification", "external_code_privacy", "resume_identity",
             "setup_only", "explicit_launch", "missing_skill", "missing_custom_agent",
+            "round_numbering", "state_grounding",
         }.issubset(coverage), f"incomplete contract coverage: {sorted(coverage)}")
 
 

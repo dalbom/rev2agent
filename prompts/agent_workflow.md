@@ -41,7 +41,7 @@ Before spawning, specify the task, required inputs, allowed tools, owned output 
 
 Use independent contexts for reviewers: supply the relevant source artifacts and rubric, not the implementer's verdict or other reviewers' findings. Respect phase-specific frozen-input and no-prior-review rules. Limited concurrency means multiple waves of isolated workers, not fewer required review perspectives. The main agent inspects each output and resolves material findings before claiming a gate passed.
 
-If subagents are unavailable, ordinary setup, search, or writing tasks can run directly with separate outputs. Sequential self-review may provide preliminary feedback, but it is **not independent review** and cannot satisfy a mandatory independent-review gate. Report the missing capability and keep that gate pending until an eligible independent reviewer is available. Never send code externally to work around a failed privacy gate.
+If subagents are unavailable, ordinary setup, search, or writing tasks can run directly with separate outputs. Sequential self-review may provide preliminary feedback, but it is **not independent review** and cannot satisfy a mandatory independent-review gate. Report the missing capability and keep that gate pending until an eligible independent reviewer is available. Do not offer user acceptance of self-review or permission to proceed anyway as a substitute for that gate. Never send code externally to work around a failed privacy gate.
 
 ## Skills and Host Capabilities
 
