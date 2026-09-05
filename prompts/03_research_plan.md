@@ -133,10 +133,12 @@ This file must exist before proceeding to Phase 4.
 
 ## State Update
 
-Field names and enum values follow `prompts/conventions.md`. After user confirms:
+Field names and enum values follow `prompts/conventions.md`. After user confirms, read the current `.research_state.json` before preparing the atomic transition. Apply this transition only while the persisted state is still in Phase 3; if it already records this approval's transition, resume its current phase without incrementing the round or appending the completion event again. Conversation context and existing initial summaries do not establish a fresh project's round number.
+
+For a pending Phase 3 transition:
 - `current_phase`: `4`
 - `sub_step`: `null`
-- `current_round`: increment by 1 — do NOT set to `1` unconditionally. Fresh project: `0` → `1` (first round). Re-entry from Phase 6 after Round N: `N` → `N+1` (rounds are monotonic and never reset; see `prompts/conventions.md`).
+- `current_round`: increment by 1 from the persisted value, exactly once for this transition. Do not infer the stored value from the phase, approval wording, or summaries, and do not default it to zero. If it is not yet known, read state first; if missing or invalid in that state, follow the recovery rules in `prompts/conventions.md` before advancing. Rounds are monotonic and never reset.
 - `current_round_short_name`: `""` — the new round has no identity until Phase 4 confirms its design and name.
 - `phase_status`: `"not_started"`
 - `project_status`: unchanged

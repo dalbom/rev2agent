@@ -84,7 +84,7 @@ w/o component C  | 73.9 ± 0.5
 
 ### 6.4 Statistical Tests
 
-Use Task subagent to run statistical tests:
+Use a bounded task subagent, or work directly when unavailable, to prepare statistical tests. Before executing any analysis or figure script that computes values, complete the Code Verification Protocol in section 6.6 and Phase 5; section order is not permission to run unreviewed code. Then run the verified tests:
 
 ```
 For each pair of methods being compared:

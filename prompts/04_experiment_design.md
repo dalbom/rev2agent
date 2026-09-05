@@ -1,7 +1,7 @@
 # Phase 4: Experiment Design & Refinement
 
 ## Objective
-Translate the research plan into a concrete experiment design with estimated resource requirements. The user must confirm before any code is written or experiments are run.
+Translate the research plan into a concrete experiment design with estimated resource requirements. The user must confirm before experiment code is written or experiments are run. Record whether approval covers setup only or setup and execution; apply the scoped-approval rules in `prompts/agent_workflow.md`.
 
 ## Mode
 Direct conversation. Present the plan clearly and get explicit user approval.
@@ -263,7 +263,14 @@ Critical for paper validity:
 
 Present the complete experiment design with all of the above sections.
 
-Ask: **"Here's the detailed experiment plan. The total estimated time is [X days] on your current hardware. Shall I proceed with setting up the environment and writing the experiment scripts?"**
+Ask: **"Here's the detailed experiment plan, including the resource estimate of [X days] on your current hardware. Do you approve setup and execution of this experiment matrix, or setup only?"**
+
+Record the user's answer and its scope in `phase4_experiment_design.md`,
+including the approved matrix and resource limits. An approval of setup only
+permits environment preparation and experiment-code implementation, but not
+launch. An explicit setup-and-execution approval permits Phase 5 to launch once
+its verification and process-safety gates pass, without asking again. Do not
+reinterpret an older setup-only or ambiguous approval as launch authority.
 
 If user has concerns about time/resources, discuss alternatives:
 - Reduce number of seeds

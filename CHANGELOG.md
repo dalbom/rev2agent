@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-09-05]
+
+### Changed
+- Codex and Claude Code share request routing, scoped approvals, continuation, delegation, and skill fallbacks through `prompts/agent_workflow.md`, with matching entrypoint research contracts and small host adapters.
+- Repository maintenance and read-only status no longer trigger research setup; exact existing approvals are recognized without waiving scientific decisions or external-code privacy gates.
+- Experiment setup and launch authorization are explicit, independent review remains required for evidence-producing code, and fresh-session advice depends on actual context pressure.
+- An unavailable independent reviewer leaves the mandatory gate pending; user acceptance of self-review is not offered as a substitute.
+
+### Fixed
+- An explicitly selected existing project is validated before the empty-project fallback, preventing an unintended new-project interview.
+- Phase 3 increments the persisted round exactly once and resumes an already-recorded transition without resetting the round or duplicating its completion event.
+
+### Added
+- Structural host-parity checks and synthetic workflow scenarios with a documented cross-host validation procedure. These checks do not establish equivalent model performance.
+- [Recorded Codex and authenticated Claude decision-probe results](docs/cross-host-validation-results.md), including model-identity limits, remaining semantic omissions, and regression cases for round resumption.
+
 ## [2026-07-11]
 
 ### Added

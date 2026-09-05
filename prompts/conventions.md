@@ -2,6 +2,8 @@
 
 This file is host-neutral and applies to **every phase**. Both entrypoints (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex) point here, and phase prompts reference it as `prompts/conventions.md`. When a phase prompt and this file disagree on state schema, enums, or round numbering, **this file wins**.
 
+Request routing and execution behavior are owned by `prompts/agent_workflow.md`. Its autonomy rules do not override this file's state, lock, terminal-status, or recovery gates.
+
 ## State File: `{project_dir}/.research_state.json`
 
 The single source of truth for session resumption. Schema:

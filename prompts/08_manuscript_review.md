@@ -12,7 +12,14 @@ Before finalizing a manuscript, run a simulated peer review with a panel of AI a
 
 ## Review Panel Composition
 
-Launch **5 reviewer agents** (host-native subagents) in parallel, plus the **main agent acts as Editor-in-Chief** to synthesize and implement changes.
+Use **5 reviewer roles** as isolated host-native subagents, in parallel or in
+bounded waves within host concurrency limits. The **main agent acts as
+Editor-in-Chief** to synthesize and implement changes. Follow
+`prompts/agent_workflow.md` for task ownership and capability checks. If isolated
+reviewers are unavailable, perform useful sequential role-based review but
+label it preliminary and non-independent; it cannot complete the independent
+panel gate or justify marking the manuscript final. Report the missing
+capability and retain the review artifacts for a later independent panel.
 
 | Reviewer | Persona | Primary Focus |
 |----------|---------|---------------|
@@ -24,7 +31,10 @@ Launch **5 reviewer agents** (host-native subagents) in parallel, plus the **mai
 
 ## Reviewer Independence Protocol
 
-When Phase 8 re-runs (revision loop after a previous review cycle), each reviewer agent MUST start with fresh context:
+In every review cycle, including re-runs after revision, each reviewer agent
+MUST start with fresh context. Do not inherit the editor's conversation,
+implementation rationale, or other reviewers' verdicts. Supply the bounded
+inputs below explicitly:
 
 1. **Do NOT include** previous review files (`manuscript/reviews/reviewer_*.md`) in the reviewer's spawn prompt — and instruct reviewers NOT to read `manuscript/reviews/` themselves.
 2. **Do NOT include** `review_synthesis.md` or `review_response.md` from prior rounds.
@@ -189,9 +199,11 @@ Flag any misalignment.
 
 Phase 8 uses a **two-pass** approach. Pass 1 catches global issues; Pass 2 drills into each section with targeted questions auto-generated from Pass 1 findings.
 
-### Pass 1: Global Review (5 reviewers in parallel)
+### Pass 1: Global Review (5 isolated reviewers)
 
-Launch 5 reviewer agents as described above. Each reviews the full manuscript with the structural audit checklist and their persona-specific rubric.
+Run the 5 reviewer roles as described above, in parallel or bounded waves.
+Each reviews the full manuscript with the structural audit checklist and their
+persona-specific rubric; do not share reviews between workers.
 
 ### Pass 2: Section-by-Section Deep Dive (Editor-in-Chief)
 
@@ -278,7 +290,11 @@ After both passes:
    The synthesis must account for individual high-severity evidence on its
    merits; reviewer vote count cannot erase contradictory evidence.
 
-4. **Implement**: Apply changes to the manuscript files.
+4. **Implement**: Apply manuscript corrections within the authorized review
+   scope. Present proposals that change the research question, Evidence
+   Contract, interpretation, or experiment plan through their owning approval
+   gate. Prepare supporting analysis and reversible editorial fixes while
+   awaiting a needed decision; do not launch new experiments from Phase 8.
 
 5. **Verification**: Re-compile LaTeX and run validation checks.
 
@@ -317,4 +333,4 @@ After user approves and changes are implemented:
 **Routing after fixes:**
 - Text changes only → `current_phase`: `7`, `phase_status`: `"not_started"`. Stay in Phase 7/8 revision loop.
 - New experiments needed → `current_phase`: `6`, `sub_step`: `"review_reentry"`, `phase_status`: `"not_started"`. Phase 6 enters its **Phase 8 re-entry mode** (see `prompts/06_result_analysis.md`): it skips the analysis steps and goes straight to Round Planning, seeding candidate directions from `manuscript/review_synthesis.md`. Preserve both `current_round` and `current_round_short_name` here; they identify the last completed round until Phase 6 confirms and persists the next round. Do NOT increment or rename the round in Phase 8.
-- All issues resolved → `phase_status`: `"completed"`, `project_status`: `"completed"`, `manuscript.status`: `"final"` (enum in `prompts/conventions.md`). Manuscript is ready for submission.
+- All issues resolved, the independent panel completed, and the user approved → `phase_status`: `"completed"`, `project_status`: `"completed"`, `manuscript.status`: `"final"` (enum in `prompts/conventions.md`). Manuscript is ready for submission. This status does not authorize external submission or publication.
