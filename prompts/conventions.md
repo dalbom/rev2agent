@@ -4,6 +4,38 @@ This file is host-neutral and applies to **every phase**. Both entrypoints (`CLA
 
 Request routing and execution behavior are owned by `prompts/agent_workflow.md`. Its autonomy rules do not override this file's state, lock, terminal-status, or recovery gates.
 
+## Startup Protocol
+
+Run this protocol for research execution, after request routing in `prompts/agent_workflow.md`.
+
+1. **Check setup and security schema before project discovery:** inspect only the structure of `.rev2agent_config.json`. Read `prompts/00_setup.md` and complete setup/migration if config is absent, `version` is not `2`, a legacy `api_key` value field exists, or required version-2 privacy fields are invalid. Never use a legacy credential value.
+2. **Select a project:** research projects live in subdirectories of the repository root. Use an already selected project; validate its path and state rather than asking again. Otherwise scan for project directories containing `.research_state.json`, excluding `_new_project_draft/`. If that draft exists, offer resume/discard under Phase 1. List available projects and ask which to resume or whether to start new. An empty list or missing selected project does not authorize a replacement: start Phase 1 only when new research is requested.
+3. **Resume from state:** `{project_dir}/.research_state.json` is authoritative, and its `project_dir` is the base for every project operation. Check `project_status` before dispatching on `phase_status` and before creating a session lock:
+   - `completed`: report final artifacts and do not advance.
+   - `archived`: report that it is archived and do not mutate or advance.
+   Finish terminal-status responses without soliciting reactivation. For active projects, apply the State Write Rules and Error Recovery lock/kill-flag checks below. Then read the current phase prompt and dispatch:
+   - `not_started`: begin the phase.
+   - `in_progress`: check persisted artifacts and any running process, then resume the remaining work.
+   - `waiting_for_user`: match the latest reply to the pending artifact/decision; record exact existing approval and complete the transition checklist, or ask for the missing decision.
+   - `completed`: advance using the owning phase's state update and transition checklist.
+   - `failed`: diagnose and recover under Error Recovery.
+
+## Phase Overview
+
+Read the owning prompt before phase work. It defines the required outputs, scientific decisions, and next transition; this index does not authorize skipping them.
+
+| Phase | Prompt |
+|-------|--------|
+| 0 — Setup | `prompts/00_setup.md` |
+| 1 — Topic Interview | `prompts/01_interview.md` |
+| 2 — Literature Search | `prompts/02_literature_search.md` |
+| 3 — Research Plan | `prompts/03_research_plan.md` |
+| 4 — Experiment Design | `prompts/04_experiment_design.md` |
+| 5 — Experiment Execution | `prompts/05_experiment_execution.md` |
+| 6 — Result Analysis and Round Planning | `prompts/06_result_analysis.md` |
+| 7 — Manuscript Writing | `prompts/07_manuscript_writing.md` |
+| 8 — Manuscript Review | `prompts/08_manuscript_review.md` |
+
 ## State File: `{project_dir}/.research_state.json`
 
 The single source of truth for session resumption. Schema:

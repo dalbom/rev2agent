@@ -13,6 +13,16 @@ def read(relative_path):
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def loaded_research_contract(entrypoint):
+    """Follow the adapters' required shared sources instead of duplicating protocols."""
+    adapter = read(entrypoint)
+    assert "prompts/agent_workflow.md" in adapter
+    assert "prompts/conventions.md" in adapter
+    workflow = read("prompts/agent_workflow.md")
+    assert "prompts/conventions.md" in workflow
+    return workflow + "\n" + read("prompts/conventions.md")
+
+
 def between(text, start, end=None):
     """Return prompt text after *start* and before *end*."""
     _, separator, tail = text.partition(start)
@@ -524,7 +534,7 @@ class TestTerminalProjectStartup(unittest.TestCase):
     def test_entrypoints_stop_terminal_projects_before_phase_dispatch(self):
         for entrypoint in ("AGENTS.md", "CLAUDE.md"):
             with self.subTest(entrypoint=entrypoint):
-                text = read(entrypoint)
+                text = loaded_research_contract(entrypoint)
                 ordering = "Check `project_status` before dispatching on `phase_status`"
                 self.assertIn(ordering, text)
                 self.assertIn("report final artifacts and do not advance", text)
@@ -683,7 +693,7 @@ class TestCredentialAndCodeEgressSafety(unittest.TestCase):
     def test_both_entrypoints_route_legacy_config_before_project_startup(self):
         for entrypoint in ("AGENTS.md", "CLAUDE.md"):
             with self.subTest(entrypoint=entrypoint):
-                text = read(entrypoint)
+                text = loaded_research_contract(entrypoint)
                 startup = between(text, "## Startup Protocol", "## Phase Overview")
                 self.assertIn("version", startup)
                 self.assertIn("legacy `api_key`", startup)
@@ -697,7 +707,7 @@ class TestCredentialAndCodeEgressSafety(unittest.TestCase):
         self.assertIn("major revision", self.setup)
         for entrypoint in ("AGENTS.md", "CLAUDE.md"):
             with self.subTest(entrypoint=entrypoint):
-                text = read(entrypoint)
+                text = loaded_research_contract(entrypoint)
                 external_section = between(
                     text,
                     "### External Models",
