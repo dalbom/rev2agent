@@ -12,7 +12,7 @@ python3 -m unittest discover -s tests
 
 `tests/test_agent_workflow.py` checks shared routing, protocol ownership, host-independent workflow content, and scenario coverage. Existing `test_prompt_invariants.py` checks scientific evidence, state transitions, exact run identity, terminal projects, and external-code privacy. Read the changed instructions as well: a keyword check cannot detect every contradiction or prove that a model will obey a rule.
 
-See [the dated validation record](cross-host-validation-results.md) for executed checks and pending host trials.
+See [the original validation record](cross-host-validation-results.md) and [the simplification comparison](prompt-simplification.md) for executed checks and their limits.
 
 ## Trial status and local capabilities
 
@@ -31,14 +31,14 @@ Claude's `--bare` mode disables OAuth/keychain reads and requires another suppor
 
 Compare two revisions for each host: the pre-update release baseline and the proposed release commit. Use the same scenario fixture revision and evaluator rubric for all four cells. If files are still uncommitted, record their SHA-256 hashes and dirty status; a commit ID alone does not identify the tested prompt.
 
-Use `tests/fixtures/workflow/scenarios.json`. All project names, decisions, metadata, and results there are synthetic. The fixture includes repository maintenance, approval reuse, missing scientific decisions, user steering, bounded review, unavailable independent reviewers, terminal projects, session ownership, verification, code privacy, config identity, and persisted round transitions. Preserve earlier fixture snapshots if adding regression cases after inspecting a response; those additions are development checks, not held-out evidence.
+Use `tests/fixtures/workflow/scenarios.json` and `simplification-heldout.json` in the same directory. All project names, decisions, metadata, and results there are synthetic. The fixtures include repository maintenance, approval reuse, missing scientific decisions, user steering, bounded review, unavailable independent reviewers, terminal projects, session ownership, verification, code privacy, config identity, and persisted round transitions. The eight simplification cases are now regression checks; their held-out status applies only to the frozen comparison. Preserve earlier fixture snapshots if adding regression cases after inspecting a response; those additions are development checks, not held-out evidence.
 
 For each scenario, assemble `input.txt` in this order:
 
 1. A fixed harness instruction: "This is a synthetic, read-only decision probe. Do not call tools, read other files, make external requests, change files, or launch processes. Use only the supplied facts and instructions. Describe the next authorized action; do not pretend it happened. Return the requested JSON object."
 2. The full host entrypoint from the selected revision: `AGENTS.md` for Codex, `CLAUDE.md` for Claude Code.
-3. `prompts/agent_workflow.md` from that revision when present. Record its absence for the old baseline; never insert the new workflow into an old prompt bundle.
-4. The scenario's `instruction_files`, taken from that same revision, each included once with its source path. A missing required file makes the cell invalid; record the error rather than dropping it.
+3. `prompts/agent_workflow.md` from that revision when present. Record its absence for the old baseline; never insert the new workflow into an old prompt bundle. For comparisons after the startup relocation, include `prompts/conventions.md` for both revisions so their complete research contracts are available.
+4. The scenario's `instruction_files`, taken from that same revision, each included once with its source path. Deduplicate files already included above. A missing required file makes the cell invalid; record the error rather than dropping it.
 5. The scenario's `input` and the fixed output contract below.
 
 Keep `expected`, `must_observe`, and `must_not_observe` out of model inputs. They are evaluator-only answers. Hash the assembled input. Do not use personal research projects, real source scripts, `.rev2agent_config.json`, credentials, logs, or private manuscripts. The trials do not need those files.

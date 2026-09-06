@@ -26,6 +26,18 @@ def section(text, heading):
 
 
 class TestSharedAgentWorkflow(unittest.TestCase):
+    def test_initial_host_instructions_fit_pre_update_word_budget(self):
+        # Measure everything initially required by the adapters, not their size alone.
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            with self.subTest(host=name):
+                initial = (ROOT / name).read_text() + self.workflow()
+                self.assertLessEqual(len(initial.split()), 2565)
+
+    def test_total_runtime_documents_fit_pre_update_word_budget(self):
+        # Moving prose into another runtime file must not masquerade as simplification.
+        paths = [ROOT / "AGENTS.md", ROOT / "CLAUDE.md", *sorted((ROOT / "prompts").rglob("*.md"))]
+        self.assertLessEqual(sum(len(path.read_text().split()) for path in paths), 29316)
+
     def workflow(self):
         path = ROOT / WORKFLOW
         self.assertTrue(path.is_file(), f"missing shared workflow: {WORKFLOW}")
@@ -35,39 +47,34 @@ class TestSharedAgentWorkflow(unittest.TestCase):
         for filename in ("AGENTS.md", "CLAUDE.md"):
             with self.subTest(host=filename):
                 text = (ROOT / filename).read_text(encoding="utf-8")
-                routing = section(text, "Request Routing")
-                self.assertIn(WORKFLOW, routing)
-                self.assertLess(text.index("## Request Routing"), text.index("## Startup Protocol"))
+                self.assertRegex(text, rf"Read `?{re.escape(WORKFLOW)}`? before")
+                self.assertIn("prompts/conventions.md", text)
+                self.assertNotIn("## Startup Protocol", text)
 
     def test_host_routing_contract_is_shared(self):
         contracts = [
-            section((ROOT / name).read_text(encoding="utf-8"), "Request Routing")
+            (ROOT / name).read_text(encoding="utf-8").split("## Host Adapter", 1)[0]
             for name in ("AGENTS.md", "CLAUDE.md")
         ]
-        self.assertEqual(contracts[0], contracts[1], "host mechanics must not change request routing")
+        self.assertEqual(contracts[0], contracts[1], "host mechanics must not change routing")
 
-    def test_consequential_research_contracts_have_host_parity(self):
-        entrypoints = [
-            (ROOT / name).read_text(encoding="utf-8")
-            for name in ("AGENTS.md", "CLAUDE.md")
-        ]
-        for heading in (
-            "Startup Protocol", "Phase Overview", "Phase Routing", "State Management",
-            "Global Rules", '"Major Revision" Trigger',
-        ):
+    def test_research_startup_and_phase_index_have_one_owner(self):
+        conventions = (ROOT / "prompts/conventions.md").read_text()
+        for heading in ("Startup Protocol", "Phase Overview"):
             with self.subTest(contract=heading):
-                self.assertEqual(section(entrypoints[0], heading), section(entrypoints[1], heading))
+                self.assertTrue(section(conventions, heading))
+                for name in ("AGENTS.md", "CLAUDE.md", WORKFLOW):
+                    self.assertNotIn("## " + heading, (ROOT / name).read_text())
+        self.assertIn("Startup Protocol", self.workflow())
+        self.assertIn("prompts/conventions.md", self.workflow())
+        for phase in range(9):
+            self.assertRegex(section(conventions, "Phase Overview"), rf"prompts/0{phase}_[a-z_]+\.md")
 
     def test_missing_selected_project_does_not_fall_through_to_interview(self):
-        for filename in ("AGENTS.md", "CLAUDE.md"):
-            with self.subTest(host=filename):
-                routing = section((ROOT / filename).read_text(encoding="utf-8"), "Phase Routing")
-                code = routing.split("```", 2)[1]
-                self.assertIn("if user picks existing project", code)
-                self.assertIn("elif no projects found", code)
-                self.assertLess(code.index("if user picks existing project"), code.index("elif no projects found"))
-                missing = code.split("elif no projects found:", 1)[1].split("else:", 1)[0]
-                self.assertNotIn("start Phase 1", missing)
+        routing = section((ROOT / "prompts/conventions.md").read_text(), "Startup Protocol")
+        self.assertIn("Use an already selected project", routing)
+        self.assertIn("missing selected project does not authorize a replacement", routing)
+        self.assertIn("start Phase 1 only when new research is requested", routing)
 
     def test_shared_contract_has_explicit_owners_for_each_behavior(self):
         workflow = self.workflow()
@@ -98,7 +105,12 @@ class TestBehaviorScenarioFixtures(unittest.TestCase):
 
     def fixtures(self):
         self.assertTrue(self.fixture_path.is_file(), "missing reusable behavior scenarios")
-        return json.loads(self.fixture_path.read_text(encoding="utf-8"))
+        fixture = json.loads(self.fixture_path.read_text(encoding="utf-8"))
+        heldout_path = self.fixture_path.with_name("simplification-heldout.json")
+        heldout = json.loads(heldout_path.read_text(encoding="utf-8"))
+        self.assertEqual(heldout["schema_version"], fixture["schema_version"])
+        fixture["scenarios"].extend(heldout["scenarios"])
+        return fixture
 
     def test_scenarios_have_unique_ids_and_reviewable_expectations(self):
         fixture = self.fixtures()

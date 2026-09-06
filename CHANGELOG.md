@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-09-07]
+
+### Changed
+- Reduced both host entrypoints to adapters, consolidated execution rules in `prompts/agent_workflow.md`, and moved research startup and phase lookup into `prompts/conventions.md`.
+- Removed repeated phase orchestration prose while retaining scientific procedures, reviewer requirements, consent gates, and state/artifact contracts.
+
+### Added
+- Instruction-size regression checks and a [comparison with the previous release](docs/prompt-simplification.md), separating prompt footprint from behavioral and operational evidence.
+
 ## [2026-09-05]
 
 ### Changed
