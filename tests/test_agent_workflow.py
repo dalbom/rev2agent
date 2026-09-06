@@ -105,7 +105,12 @@ class TestBehaviorScenarioFixtures(unittest.TestCase):
 
     def fixtures(self):
         self.assertTrue(self.fixture_path.is_file(), "missing reusable behavior scenarios")
-        return json.loads(self.fixture_path.read_text(encoding="utf-8"))
+        fixture = json.loads(self.fixture_path.read_text(encoding="utf-8"))
+        heldout_path = self.fixture_path.with_name("simplification-heldout.json")
+        heldout = json.loads(heldout_path.read_text(encoding="utf-8"))
+        self.assertEqual(heldout["schema_version"], fixture["schema_version"])
+        fixture["scenarios"].extend(heldout["scenarios"])
+        return fixture
 
     def test_scenarios_have_unique_ids_and_reviewable_expectations(self):
         fixture = self.fixtures()
