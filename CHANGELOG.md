@@ -12,6 +12,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - Instruction-size regression checks and a [comparison with the previous release](docs/prompt-simplification.md), separating prompt footprint from behavioral and operational evidence.
+- A [follow-up omission audit](docs/omission-investigation.md) with explicit scoring corrections, targeted execution evidence, and unresolved host-validation limits.
 
 ## [2026-09-05]
 

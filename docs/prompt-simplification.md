@@ -1,5 +1,7 @@
 # Prompt simplification — 2026-09-07
 
+> **Post-hoc scoring correction:** [The omission investigation](omission-investigation.md) reassesses two over-specific criteria. Its separate sensitivity calculation gives 98/112 released versus 96/112 simplified semantic coverage; the original 96/112 versus 92/112 scores remain below. Two excess candidate prose gaps remain in the original no-tool probes, which did not establish either as an operational failure. See [execution observations and limits](omission-investigation.md#execution-observations-and-limits) for the follow-up. This correction is not a new preregistered result or proof of operational equivalence.
+
 This follow-up replaces overlapping instructions from PR #10 with shared ownership. It preserves scientific procedures and required reviewer counts. Source reduction is measured separately from host behavior; a smaller prompt is not proof of equivalent research quality or fewer runtime agent calls.
 
 ## Scope and instruction size
