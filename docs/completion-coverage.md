@@ -41,7 +41,23 @@ All 112 outputs had valid schemas and used no tools. Review found coverage omiss
 
 The single candidate field mismatch is the declared `holdout_06` ambiguity: it returned true for supplied completed verification while correctly continuing to monitor the existing run. With only that expectation restored to the old true label, the same responses score 54/56 baseline and 55/56 candidate on fields. Neither calculation replaces the semantic result or historical scores. Codex emitted the previously observed disabled-code-mode and experimental-feature startup diagnostics; all four invocations completed successfully. Actual backend model identity was not emitted.
 
-Claude's first baseline invocation failed with HTTP 401 because its OAuth access token was revoked; it produced no valid decision batch. That attempt is retained, and further Claude calls await restored authentication. The within-host order is preserved while Codex continues independently; cross-host lockstep is relaxed for this authentication interruption. Initial delegated reviews also encountered a Codex usage limit, but source/fixture review and Codex answer grading subsequently completed.
+Claude's first baseline invocation failed with HTTP 401 reporting a revoked OAuth access token; it produced no valid decision batch. That attempt is retained. The cause of revocation was not established. After a fresh login, an authentication canary returned `AUTH_OK`, and the comparison resumed with the same frozen inputs. The within-host order is preserved; cross-host lockstep was relaxed for the authentication interruption. Initial delegated reviews also encountered a Codex usage limit, but source/fixture review and Codex answer grading subsequently completed.
+
+Before the Claude replay, an additive authentication amendment removed the interactive credential-file mount. The previous read-only mount could not persist refreshed credentials and isolated the CLI's surrounding lock state. This is a harness limitation, not proof that it caused the revocation. The amended launcher passes only the current access token in memory through the documented `CLAUDE_CODE_OAUTH_TOKEN` environment variable, requires at least two hours of remaining validity, and runs Claude sessions serially. Refresh credentials and personal configuration/history remain outside the namespace. Both Claude variants use this adapter; prompt bytes, models, effort, CLI arguments, and grading remain frozen. The canary confirmed working inference authentication and unchanged credential-file bytes; it does not establish reliable future interactive refresh. See the [official environment-variable reference](https://code.claude.com/docs/en/env-vars).
+
+All four Claude decision batches then completed. The independent reviewer graded all 112 answers without the variant mapping, using the same criteria and interpretations as the Codex review, and saved annotations before unblinding.
+
+| Claude measure | Current simplified draft | With completion rule |
+|---|---:|---:|
+| Complete answers, repeat 1 | 26/28 | 27/28 |
+| Complete answers, repeat 2 | 25/28 | 26/28 |
+| Complete answers, combined | **51/56** | **53/56** |
+| Answers matching every expected field | 54/56 | 54/56 |
+| Mean prose words per answer | 51.8 | 64.1 |
+
+All 112 Claude outputs had valid schemas and used no tools. The answering model was reported as `claude-fable-5-1`; the CLI also reported auxiliary Haiku usage whose role in the answers was not established. Review found coverage omissions and no explicit action contradictions. Both variants omitted a scoped check for the literal documentation-edit scenario in both repeats. The generic-reviewer main-inspection detail was omitted once in each variant. One baseline repeat also omitted post-launch process verification and main inspection of the documentation worker's return. These are proposed-answer omissions, not observed execution failures. The original 20-case subset scored 38/40 versus 39/40 for completeness; the eight previously held-out cases scored 13/16 versus 14/16.
+
+Every Claude field mismatch is the declared `holdout_06` ambiguity. With only that expectation restored to the historical true label, both variants score 56/56 on fields. The primary results remain 54/56. The modest coverage increase came with longer answers; these two repeats do not establish a reliable effect size or general superiority.
 
 All four Codex operational sessions completed. A separate reviewer inspected the ordered tool events, initial/final inventories, protected files, and final reports against the frozen expectations. The reviewer knew fixture design and variant identity; this execution review was not blinded.
 
@@ -52,11 +68,22 @@ All four Codex operational sessions completed. A separate reviewer inspected the
 
 Both handoff runs restored the missing summary before the visible atomic state transition, preserved all prior history, advanced round 4 to 5 exactly once, and stopped before design. Both documentation runs repaired the available setup link, verified it, and accurately reported the missing recovery guide. The candidate added a missing-guide notice and catalog link; the baseline left the unresolved link and asked for its destination. Both were allowed by the frozen criteria. Neither fabricated the missing guide or created research state. Recovered interpreter/check-command diagnostics remain in the traces; later successful checks supply the verification evidence.
 
-These executions show that both versions met the requirements in these two cases. They do not demonstrate an execution improvement or resolve every remaining prose omission. The four planned Claude operation sessions have not run because authentication is still blocked.
+All four Claude operational sessions also completed. The same separate execution reviewer inspected their ordered tool results, artifacts, protected inputs, and final reports against the frozen criteria, with variant identity visible.
+
+| Claude operation | Baseline execution / final coverage | Candidate execution / final coverage |
+|---|---|---|
+| Missing-summary handoff | PASS / PASS | PASS / PASS |
+| Documentation with unavailable guide | PASS / PASS | PASS / PASS |
+
+Both Claude handoff runs reconstructed the missing summary before the observed atomic state write, preserved all six prior history entries and added one completion event, advanced round 4 to 5 once, and left detailed design unstarted. Both documentation runs repaired and checked the setup link while accurately reporting recovery instructions as unavailable. The candidate changed the recovery link to the catalog-declared path and explicitly reported that its target was still missing; the baseline retained the original unresolved link. Neither fabricated recovery content. All four sessions reported successful completion by `claude-fable-5-1` and used no native workers. Protected fixture and runtime-source bytes were preserved.
+
+The execution review retained two minor wording issues: the candidate handoff compressed a specific SOTA-baseline exclusion, and the baseline documentation answer inferred historical nonexistence from current absence. Neither affected the frozen primary outcome grades.
+
+Across both hosts, all eight operational sessions passed execution and final-answer coverage. These executions show that both versions met the requirements in these two cases. They do not demonstrate an execution improvement or resolve every remaining prose omission.
 
 The runtime instruction total is now **25,572 words**, compared with **31,431** in the released baseline used by the original simplification report: an **18.6% reduction**. These are source word counts, not token measurements or measured execution savings.
 
-New raw evidence is retained locally under `.git/task-backups/2026-09-08-completeness/`, including the failed Claude attempt, both freezes, all Codex replies/traces, blinded annotations and the operation review. Decision-freeze SHA-256: `6ef0ff4a581ee71055a4cb14a21d199cfd8e199420ce51cba9ebdb617a37b39b`. Operation-freeze SHA-256: `db41f21bebd170123dbd8e67921ccbad006d97ce96b0dbdb9ba3c43cc734dea2`.
+New raw evidence is retained locally under `.git/task-backups/2026-09-08-completeness/`, including the failed Claude attempt, both freezes, both hosts' replies/traces, blinded annotations, operation reviews, and the authentication amendment. Decision-freeze SHA-256: `6ef0ff4a581ee71055a4cb14a21d199cfd8e199420ce51cba9ebdb617a37b39b`. Operation-freeze SHA-256: `db41f21bebd170123dbd8e67921ccbad006d97ce96b0dbdb9ba3c43cc734dea2`. Authentication-adapter SHA-256: `35dc55b2996ad8a0979d174b2c7620c2779867b44eefcc713842466b59cdb1ae`.
 
 ## Evidence limits
 

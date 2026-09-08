@@ -11,6 +11,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - A [completion-coverage follow-up](docs/completion-coverage.md) with a separate evaluation against the simplified draft, clarified grading criteria, and explicit validation limits.
+- Completed Claude follow-up results and the authentication-harness amendment, alongside the Codex results and both hosts' practical execution checks.
 
 ## [2026-09-07]
 
