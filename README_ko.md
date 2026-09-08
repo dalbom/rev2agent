@@ -24,7 +24,7 @@
 
 막혔을 때 **`major revision`** 한 줄 치면 호스트의 기본 리뷰 에이전트들과 Phase 0에서 설정한 외부 모델(GPT, Gemini, Grok 등)이 패널로 붙어서 연구 방향을 놓고 토론합니다. 학회 리뷰 6개월 기다릴 거 없이.
 
-Codex와 Claude Code는 같은 [에이전트 작업 규칙](prompts/agent_workflow.md)을 따릅니다. 저장소 관련 질문에는 연구 시작 절차를 실행하지 않고, 이미 승인한 작업은 승인 범위 안에서 이어갑니다. 실험의 독립 검증과 근거 확인은 그대로 유지합니다. 도구와 skill은 각 호스트에서 실제 사용 가능한 기능에 맞추며, 모델은 호스트 설정에서 선택합니다. 시나리오별 검증 범위, 테스트한 호스트 정보, 남은 한계는 [검증 절차](docs/cross-host-validation.md)와 [실행 결과](docs/cross-host-validation-results.md)에서 확인할 수 있습니다. 가상 시나리오에서의 판단 검증만으로 두 호스트의 연구 품질이나 실제 동작이 같다고 볼 수는 없습니다.
+Codex와 Claude Code는 짧은 진입 문서를 통해 같은 [에이전트 작업 규칙](prompts/agent_workflow.md)을 읽습니다. 연구 시작과 상태 관리 규칙은 [공통 규약](prompts/conventions.md)에, 연구 절차는 각 단계 프롬프트에 둡니다. 모델은 호스트 설정에서 선택합니다. 지시문 분량과 호스트별 검증 결과, 남은 한계는 [간소화 비교 기록](docs/prompt-simplification.md)에서 확인할 수 있습니다.
 
 ## 주요 기능
 

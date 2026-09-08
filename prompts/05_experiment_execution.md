@@ -8,16 +8,11 @@ Set up the environment, download data, write all experiment scripts, and launch 
 
 ## Execution Authority
 
-Apply `prompts/agent_workflow.md`. Before launch, read the approval scope in
-the Phase 4 summary (or the Phase 6 summary for an identical-config skip) and
-the current user instruction. Continue setup and launch without another
-confirmation only when execution of this matrix within its resource limits is
-already authorized. Setup-only approval permits preparation, not launch.
-Missing or ambiguous launch authority requires one focused confirmation after
-the verified setup is ready; do not reinterpret old approval. A material
-change to the matrix, method, data, or resource limits returns to the owning
-approval gate. Routine fixes within the approved protocol retain authority
-and still pass code verification before execution.
+Read the Phase 4 summary (Phase 6 summary for an identical-config skip) and
+current user instruction. Apply `prompts/agent_workflow.md` to approval scope
+and material changes: setup-only permits preparation; launch requires approval
+for this matrix and its resource limits. Check authority after verified setup
+under "After Subagents Complete" below.
 
 ## Round Identity and Paths (MANDATORY)
 
@@ -44,22 +39,18 @@ Verification applies to ALL scripts that produce or compute values used in the m
 
 Scripts that ONLY read pre-computed results from JSON/CSV and render them (pure plotting) are exempt from Step 1 but still require Step 2.
 
-Ordinary repository maintenance and operational helpers that neither implement
-the experiment protocol nor compute manuscript-facing values use the
-proportional validation policy in `prompts/agent_workflow.md`. Their location
-alone does not determine scope. A runner's data selection, configuration,
-checkpoint reuse, and result identity affect the protocol and remain in scope.
+A runner's data selection, configuration, checkpoint reuse, and result identity
+affect the protocol and remain in scope. Helpers that neither implement the
+protocol nor compute manuscript-facing values follow the maintenance validation
+policy in `prompts/agent_workflow.md`, regardless of location.
 
 ### Step 1: Logical Flow Verification
 
 Before running any experiment script, use an independent adversarial reviewer to verify that the code implements the intended experimental protocol. This catches methodology bugs that ordinary code review cannot — bugs where the code runs perfectly but tests the wrong thing.
 
-Use an isolated reviewer with the contract and relevant code, without the
-implementer's reasoning or prior verdicts. Follow the delegation rules in
-`prompts/agent_workflow.md`. If no isolated reviewer is available, a sequential
-self-review is preliminary and cannot satisfy this independent gate. Preserve
-the prepared code and report the missing review capability; do not execute
-evidence-producing code or claim an independent PASS.
+Supply the contract and relevant code to an isolated reviewer under the
+independence and pending-gate rules in `prompts/agent_workflow.md`. Without an
+eligible independent reviewer, preserve the code and keep execution pending.
 
 The mandatory default is a **host-native adversarial reviewer**. Sending unpublished code to an external provider is permitted only when both conditions hold:
 
@@ -121,11 +112,9 @@ Only after Steps 1-2 pass:
 
 ### Automatic Enforcement
 
-**This protocol is NOT optional.** Apply its Scope whenever an experiment
-script is written or modified, without waiting for user instruction. For code
-requiring logical verification, never skip Steps 1-2 even if it "looks correct."
-The pure-rendering exception above remains limited to Step 1. The Round 5
-incident proved that correct-looking code can be silently wrong.
+Apply this mandatory protocol whenever an experiment script is written or
+modified, without waiting for user instruction. The pure-rendering exception
+remains limited to Step 1.
 
 ## Semantic Naming (MANDATORY)
 
@@ -271,7 +260,7 @@ Every checkpoint under `{project_dir}/experiment/checkpoints/{run_dir}/` and eve
 
 `{project_dir}/experiment/results/{round_dir}/ALL_COMPLETE` is the only round-level completion marker. It records every expected experiment-ID/seed pair, fingerprint, and validated run marker, and is written only after all expected seed-scoped `COMPLETED` markers pass validation.
 
-Resume only when the stored `config_fingerprint` is an exact match for the newly resolved `config_fingerprint` and the checkpoint's recorded seed matches the requested seed. A `COMPLETED` marker may be used to skip a run only under the same checks. On any mismatch, refuse to resume or skip, preserve the old artifact, and report **config drift**; require a new experiment ID/path or explicit user resolution before execution. For a read-only question about reuse, explain the mismatch and these future execution conditions without soliciting a new run or approval. Never silently overwrite a mismatched checkpoint or marker.
+Resume only when the stored `config_fingerprint` is an exact match for the newly resolved `config_fingerprint` and the checkpoint's recorded seed matches the requested seed. A `COMPLETED` marker may be used to skip a run only under the same checks. On any mismatch, refuse to resume or skip, preserve the old artifact, and report **config drift**; require a new experiment ID/path or explicit user resolution before execution. Read-only reuse questions follow `prompts/agent_workflow.md` request routing. Never silently overwrite a mismatched checkpoint or marker.
 
 ## Sub-tasks (via Task Subagents)
 
@@ -290,10 +279,8 @@ The setup subagents work independently, so they must share a single interface de
 
 ### Spawn Ordering
 
-Tasks 1-5 and 7 may run in parallel when their file ownership and dependencies
-are independent. Use bounded workers within host concurrency limits, or
-perform setup tasks directly, under `prompts/agent_workflow.md`. Workers write
-their assigned outputs only; the main agent owns state and experiment launch.
+Tasks 1-5 and 7 may run in parallel with independent file ownership and
+dependencies, under `prompts/agent_workflow.md` delegation rules.
 **Task 6 (run_all.sh) is spawned only AFTER Tasks 3-5 complete**, because it must call the actual CLIs of the scripts those tasks produced — pass the finished scripts' real invocations (not the contract alone) into the Task 6 prompt.
 
 ### Task 1: Environment Setup
@@ -477,14 +464,9 @@ Set up experiment monitoring:
 
 Once all subagents have finished:
 
-1. **Apply the Code Verification Protocol** (defined at the top of this file)
-   to every new or modified experiment script and its protocol-relevant
-   dependencies, including training, evaluation, baseline runners, and model
-   or utility modules. Apply the documented pure-rendering exception and
-   ordinary-maintenance scope by behavior. Required Steps 1-2 (independent
-   logical review + code-quality review) pass before execution. Step 1 uses a
-   host-native adversarial reviewer unless the explicit external-code-review
-   privacy gate passes.
+1. **Apply the Code Verification Protocol**, including its scope and privacy
+   rules, to every new or modified experiment script and protocol-relevant
+   dependency. Required Steps 1-2 must pass before execution.
 2. Complete **syntax and static checks** within the preparation scope. Defer
    training/evaluation execution, including a one-iteration dry run, until
    Step 5 establishes launch authority and passes the process-safety checks.
@@ -518,12 +500,11 @@ To monitor:
 Estimated total time: [X] hours on [GPU name]
 ```
 
-4. Check **Execution Authority** above. If launch is already authorized and
-   scope is unchanged, report that static and independent review passed and
-   continue. Otherwise ask once: **"The setup has passed static and independent
+4. Apply **Execution Authority**: continue if launch is already authorized and
+   scope is unchanged. Otherwise ask once: **"The setup has passed static and independent
    review. Do you approve the training smoke check and experiment execution
    within the stated resource limits?"** Wait for that answer before either
-   execution; preparation within the approved scope may continue.
+   execution.
 
 5. With launch authority and all verification, kill-flag, and single-runner
    checks satisfied, **dry run** the training script for 1 iteration to catch

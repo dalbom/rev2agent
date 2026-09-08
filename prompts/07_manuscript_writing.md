@@ -6,10 +6,8 @@ Write a complete manuscript draft in LaTeX, ready for submission to the target v
 ## Mode
 **Task (subagents)** for parallel section writing, then **direct** for integration and review.
 
-Follow `prompts/agent_workflow.md` for bounded delegation and scoped approval.
-Batch section writers within host limits, with separate output files; direct
-sequential writing is available when delegation is not. Retain the independent
-review requirement for claim reproduction in Step 5.
+Follow `prompts/agent_workflow.md` for delegation, separate output ownership,
+direct-writing fallback, and scoped approval.
 
 ## Current Round Results
 
@@ -333,10 +331,8 @@ The citation verifier requires each identity source (DOI, Crossref, or Semantic 
 
 Web-verify ONLY the entries the script marked `SUSPICIOUS` or `UNVERIFIED` in Step 4.1 — entries the script verified do not need a second manual pass.
 
-For flagged entries, use bounded tasks with separate verification outputs when
-delegation helps, or verify directly with web search. Check against an
-authoritative source (DBLP, Crossref, Semantic Scholar, ACM DL, IEEE Xplore,
-arXiv, or the publisher's website):
+Check flagged entries against an authoritative source (DBLP, Crossref,
+Semantic Scholar, ACM DL, IEEE Xplore, arXiv, or the publisher's website):
 - Title: exact match (including capitalization nuances)
 - Authors: all authors listed, names spelled correctly
 - Venue: correct conference/journal name, correct year

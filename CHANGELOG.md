@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-09-08]
+
+### Changed
+- Added one shared completion and phase-handoff rule covering requested outcomes, evidence, verification, pending work, summaries, and checkpoints for both hosts.
+
+### Added
+- A [completion-coverage follow-up](docs/completion-coverage.md) with a separate evaluation against the simplified draft, clarified grading criteria, and explicit validation limits.
+- Completed Claude follow-up results and the authentication-harness amendment, alongside the Codex results and both hosts' practical execution checks.
+
+## [2026-09-07]
+
+### Changed
+- Reduced both host entrypoints to adapters, consolidated execution rules in `prompts/agent_workflow.md`, and moved research startup and phase lookup into `prompts/conventions.md`.
+- Removed repeated phase orchestration prose while retaining scientific procedures, reviewer requirements, consent gates, and state/artifact contracts.
+
+### Added
+- Instruction-size regression checks and a [comparison with the previous release](docs/prompt-simplification.md), separating prompt footprint from behavioral and operational evidence.
+- A [follow-up omission audit](docs/omission-investigation.md) with explicit scoring corrections, completed Codex and Claude execution checks, and remaining validation limits.
+
 ## [2026-09-05]
 
 ### Changed

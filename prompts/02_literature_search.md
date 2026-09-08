@@ -11,13 +11,9 @@ Search the literature broadly, identify promising research gaps, and narrow down
 
 ## Agent Structure
 
-Cover 4 research roles in **two waves**, with each role writing its own findings
-file. Use bounded host-native subagents when available, following
-`prompts/agent_workflow.md`; batch them within host concurrency limits. If
-delegation is unavailable, perform the roles sequentially and report that they
-were not independent agents. Preserve every role's output and the wave
-dependency below. No inter-agent messaging is needed — the lead reads the
-output files before synthesis.
+Cover 4 research roles in **two waves**, each writing its own findings file.
+Use the delegation and direct-execution fallback in `prompts/agent_workflow.md`;
+preserve all four outputs and the dependency below.
 
 - **Wave 1 (parallel):** survey-agent, frontier-agent, baseline-agent.
 - **Wave 2 (after wave 1 completes):** gap-agent, spawned with the wave-1 output file paths as input — it cross-references their findings, so it cannot run in parallel with them.
@@ -57,14 +53,6 @@ In file names below, `{role}` is the agent name without the `-agent` suffix: `su
    - Deliverable: Table of current SOTA methods and results on relevant datasets/metrics.
    - Output file: `{project_dir}/literature/baseline-agent.md`
 
-### Coordination
-
-The lead completes wave 1 (survey-agent, frontier-agent, baseline-agent), in
-parallel where supported. Only after all three outputs are available does the
-gap-agent role begin with those file paths as input. The lead then reads all
-four outputs and synthesizes findings. While workers run, the lead may inspect
-shared inputs or prepare synthesis criteria without repeating their searches.
-
 ## Spawn Prompts
 
 When spawning agents, include this context in each spawn prompt:
@@ -95,20 +83,17 @@ For gap-agent (wave 2), additionally include the wave-1 output file paths in the
 
 ### Deep Research Integration
 
-Reuse verified seed papers and relevant prior literature artifacts first. If
-orientation is missing, make a focused search sufficient to scope the roles;
-do not duplicate their full literature search before launching them. Use the
-`research-deep-dive` wrapper or its manual fallback from
-`prompts/agent_workflow.md` for the role-based research itself. Share verified
-sources with the roles, while allowing each to search for contrary evidence.
-The combined role outputs and lead synthesis provide the multi-source report,
-citation tracking, comparisons, and gap analysis.
+Reuse verified seed papers and prior literature artifacts; search only enough
+to orient the roles before launching them. Apply `research-deep-dive` as
+defined in `prompts/agent_workflow.md` to the role-based research, without a
+duplicate preliminary search. Share verified sources while allowing contrary
+evidence. Combine role outputs into the report, citation tracking, comparisons,
+and gap analysis.
 
 ### Parallel Search Protocol
 
-Each agent should batch independent searches within the host tool's query and
-concurrency limits. Split a larger query set into supported batches; preserve
-the effort caps below and read results before choosing dependent follow-ups.
+Batch independent queries within available tool limits; preserve the effort
+caps below and inspect results before dependent follow-ups.
 
 **Query decomposition — break the research topic into orthogonal search angles:**
 

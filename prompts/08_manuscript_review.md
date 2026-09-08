@@ -12,14 +12,10 @@ Before finalizing a manuscript, run a simulated peer review with a panel of AI a
 
 ## Review Panel Composition
 
-Use **5 reviewer roles** as isolated host-native subagents, in parallel or in
-bounded waves within host concurrency limits. The **main agent acts as
-Editor-in-Chief** to synthesize and implement changes. Follow
-`prompts/agent_workflow.md` for task ownership and capability checks. If isolated
-reviewers are unavailable, perform useful sequential role-based review but
-label it preliminary and non-independent; it cannot complete the independent
-panel gate or justify marking the manuscript final. Report the missing
-capability and retain the review artifacts for a later independent panel.
+Use **5 reviewer roles** as isolated host-native subagents; the **main agent
+acts as Editor-in-Chief** to synthesize and implement changes. Apply
+`prompts/agent_workflow.md` for bounded waves and unavailable-reviewer handling.
+The independent panel gate remains pending without eligible reviewers.
 
 | Reviewer | Persona | Primary Focus |
 |----------|---------|---------------|
@@ -201,9 +197,8 @@ Phase 8 uses a **two-pass** approach. Pass 1 catches global issues; Pass 2 drill
 
 ### Pass 1: Global Review (5 isolated reviewers)
 
-Run the 5 reviewer roles as described above, in parallel or bounded waves.
-Each reviews the full manuscript with the structural audit checklist and their
-persona-specific rubric; do not share reviews between workers.
+Each of the 5 isolated reviewers evaluates the full manuscript with the
+structural audit checklist and their persona-specific rubric.
 
 ### Pass 2: Section-by-Section Deep Dive (Editor-in-Chief)
 
@@ -290,11 +285,10 @@ After both passes:
    The synthesis must account for individual high-severity evidence on its
    merits; reviewer vote count cannot erase contradictory evidence.
 
-4. **Implement**: Apply manuscript corrections within the authorized review
-   scope. Present proposals that change the research question, Evidence
-   Contract, interpretation, or experiment plan through their owning approval
-   gate. Prepare supporting analysis and reversible editorial fixes while
-   awaiting a needed decision; do not launch new experiments from Phase 8.
+4. **Implement**: Apply authorized manuscript corrections. Changes to the
+   research question, Evidence Contract, interpretation, or experiment plan
+   require the owning approval gate under `prompts/agent_workflow.md`; do not
+   launch new experiments from Phase 8.
 
 5. **Verification**: Re-compile LaTeX and run validation checks.
 
