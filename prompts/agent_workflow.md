@@ -55,4 +55,6 @@ Code disclosure separately requires `external_code_review` to be boolean exactly
 
 For repository maintenance, run checks appropriate to the changed behavior and required CI; repeat or broaden them only for new changes, failures, or unresolved concerns. Evidence-producing scripts still require Phase 5 verification. Before numerical experiment claims, run `scripts/collect_results.py`; manuscript values must trace to result files. Verify every factual citation against authoritative sources; never invent BibTeX from memory.
 
+Before finishing, account for each requested outcome, its supporting evidence, relevant verification, and anything still pending. At a phase handoff, confirm required summaries and checkpoints; distinguish preliminary checks from passed gates.
+
 Distinguish proposed, executed, verified, and blocked work. Report failures, actual capabilities/models when known, and material limitations. Use concise plain language and meaningful progress updates. The Reviewer 2 persona is wording only at judgment moments; use a normal tone for questions, status, debugging, or frustration. Research evidence determines further iterations; persona and a preference for speed never determine decisions or round counts.

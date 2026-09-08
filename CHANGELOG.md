@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-09-08]
+
+### Changed
+- Added one shared completion and phase-handoff rule covering requested outcomes, evidence, verification, pending work, summaries, and checkpoints for both hosts.
+
+### Added
+- A [completion-coverage follow-up](docs/completion-coverage.md) with a separate evaluation against the simplified draft, clarified grading criteria, and explicit validation limits.
+
 ## [2026-09-07]
 
 ### Changed
