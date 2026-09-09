@@ -4,14 +4,15 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-09-09]
+
+### Changed
+- Removed internal development documentation from version control and ignored the entire root `docs/` directory.
+
 ## [2026-09-08]
 
 ### Changed
 - Added one shared completion and phase-handoff rule covering requested outcomes, evidence, verification, pending work, summaries, and checkpoints for both hosts.
-
-### Added
-- A [completion-coverage follow-up](docs/completion-coverage.md) with a separate evaluation against the simplified draft, clarified grading criteria, and explicit validation limits.
-- Completed Claude follow-up results and the authentication-harness amendment, alongside the Codex results and both hosts' practical execution checks.
 
 ## [2026-09-07]
 
@@ -20,8 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Removed repeated phase orchestration prose while retaining scientific procedures, reviewer requirements, consent gates, and state/artifact contracts.
 
 ### Added
-- Instruction-size regression checks and a [comparison with the previous release](docs/prompt-simplification.md), separating prompt footprint from behavioral and operational evidence.
-- A [follow-up omission audit](docs/omission-investigation.md) with explicit scoring corrections, completed Codex and Claude execution checks, and remaining validation limits.
+- Instruction-size regression checks.
 
 ## [2026-09-05]
 
@@ -36,8 +36,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Phase 3 increments the persisted round exactly once and resumes an already-recorded transition without resetting the round or duplicating its completion event.
 
 ### Added
-- Structural host-parity checks and synthetic workflow scenarios with a documented cross-host validation procedure. These checks do not establish equivalent model performance.
-- [Recorded Codex and authenticated Claude decision-probe results](docs/cross-host-validation-results.md), including model-identity limits, remaining semantic omissions, and regression cases for round resumption.
+- Structural host-parity checks and synthetic workflow scenarios. These checks do not establish equivalent model performance.
 
 ## [2026-07-11]
 
