@@ -24,7 +24,7 @@
 
 막혔을 때 **`major revision`** 한 줄 치면 호스트의 기본 리뷰 에이전트들과 Phase 0에서 설정한 외부 모델(GPT, Gemini, Grok 등)이 패널로 붙어서 연구 방향을 놓고 토론합니다. 학회 리뷰 6개월 기다릴 거 없이.
 
-Codex와 Claude Code는 짧은 진입 문서를 통해 같은 [에이전트 작업 규칙](prompts/agent_workflow.md)을 읽습니다. 연구 시작과 상태 관리 규칙은 [공통 규약](prompts/conventions.md)에, 연구 절차는 각 단계 프롬프트에 둡니다. 모델은 호스트 설정에서 선택합니다. 지시문 분량과 호스트별 검증 결과, 남은 한계는 [간소화 비교 기록](docs/prompt-simplification.md)에서 확인할 수 있습니다.
+Codex와 Claude Code는 짧은 진입 문서를 통해 같은 [에이전트 작업 규칙](prompts/agent_workflow.md)을 읽습니다. 연구 시작과 상태 관리 규칙은 [공통 규약](prompts/conventions.md)에, 연구 절차는 각 단계 프롬프트에 둡니다. 모델은 호스트 설정에서 선택합니다.
 
 ## 주요 기능
 

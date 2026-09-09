@@ -20,7 +20,7 @@ Rev2Agent takes a vague research idea and iterates through literature search, ex
 
 It runs as a set of markdown instructions for coding agents. Today the repository supports both [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and Codex via separate root entrypoints: `CLAUDE.md` for Claude Code and `AGENTS.md` for Codex. No framework, no build step -- clone the repo, open it in your agent, and follow the appropriate startup protocol.
 
-Both hosts load the same [agent workflow](prompts/agent_workflow.md) through short entrypoints. Research startup and state rules live in [conventions](prompts/conventions.md); phase prompts own scientific procedures. Model choice stays in host settings. See the [simplification comparison](docs/prompt-simplification.md) and [completion-coverage follow-up](docs/completion-coverage.md) for instruction sizes, host-probe results, and remaining limits.
+Both hosts load the same [agent workflow](prompts/agent_workflow.md) through short entrypoints. Research startup and state rules live in [conventions](prompts/conventions.md); phase prompts own scientific procedures. Model choice stays in host settings.
 
 When you're stuck, type **`major revision`**. Rev2Agent convenes a discussion panel -- host-native review agents plus whichever external models you configured in Phase 0 (GPT, Gemini, Grok, etc.) -- to argue over your research decisions. The same kind of adversarial review you'd get from a venue, minus the six-month wait.
 

@@ -502,9 +502,9 @@ class TestCanonicalProvenanceAndPidSafety(unittest.TestCase):
         self.assertIn('"seed": "aggregate"', phase5)
         self.assertIn('"contributing_seeds": [42, 123, 456]', phase5)
 
-    def test_local_improvement_plans_are_gitignored(self):
+    def test_local_docs_are_gitignored(self):
         gitignore = read(".gitignore")
-        self.assertIn("/docs/plans/", gitignore.splitlines())
+        self.assertIn("/docs/", gitignore.splitlines())
 
     def test_phase6_evidence_examples_include_seed_identity(self):
         phase6 = read("prompts/06_result_analysis.md")
