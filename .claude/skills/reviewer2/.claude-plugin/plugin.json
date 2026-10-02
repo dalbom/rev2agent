@@ -1,0 +1,24 @@
+{
+  "name": "reviewer2",
+  "displayName": "Reviewer 2 bubble",
+  "version": "0.1.0",
+  "description": "In sessions opened at the Rev2Agent root, Reviewer 2 adds a one-line aside in a speech bubble above the prompt after each answer, beside an avatar whose expression fits it.",
+  "author": { "name": "Haebom Lee" },
+  "repository": "https://github.com/dalbom/rev2agent",
+  "license": "MIT",
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Reviewer 2 bubble",
+      "description": "Show Reviewer 2's aside in a speech bubble above the prompt after each answer (Rev2Agent sessions only).",
+      "default": true
+    },
+    "model": {
+      "type": "string",
+      "title": "Reviewer 2 model",
+      "description": "Model that writes the aside. One short call per answer.",
+      "options": ["haiku", "sonnet"],
+      "default": "haiku"
+    }
+  }
+}

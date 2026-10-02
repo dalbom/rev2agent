@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [2026-10-02]
+
+### Added
+- Reviewer 2 avatars: 36 expressions drawn from the logo, with the generation prompts and a slicing script in `assets/avatars/`.
+- Reviewer 2 bubble, a Claude Code mod in `.claude/skills/reviewer2/`: in sessions opened at the repository root, a one-line Reviewer 2 aside appears above the prompt after each answer, beside an avatar that fits it. It is display-only and never enters the conversation. Turn it off or on with `/reviewer2 off|on` or `/config`.
+
 ## [2026-09-09]
 
 ### Changed

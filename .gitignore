@@ -9,6 +9,23 @@
 !/scripts/
 !/tests/
 !/.github/
+!/assets/
+
+# Avatar sources stay local: the sheets and 384 px tiles are regenerated from
+# assets/avatars/PROMPTS.md. The repo keeps the prompts, the slicing script,
+# the README preview, and the mod's own thumbnails under .claude/skills.
+/assets/avatars/sheets/
+/assets/avatars/*.png
+!/assets/avatars/preview.png
+/assets/avatars/manifest.json
+
+# Claude Code: only the project's skills folder (the reviewer2 mod) is shared;
+# settings.local.json and anything else under .claude/ stay machine-local.
+!/.claude/
+/.claude/*
+!/.claude/skills/
+# Type declarations the engine writes beside a loaded mod
+/.claude/skills/*/.claude-plugin/types/
 
 # Local documentation and internal development records
 /docs/

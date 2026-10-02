@@ -1,0 +1,4 @@
+{
+  "description": "reviewer2: Reviewer 2's aside in a speech bubble above the prompt, beside an avatar, and /reviewer2",
+  "modules": ["./register.ts"]
+}
