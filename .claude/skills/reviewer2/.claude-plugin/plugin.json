@@ -17,8 +17,8 @@
       "type": "string",
       "title": "Reviewer 2 model",
       "description": "Model that writes the aside. One short call per answer.",
-      "options": ["haiku", "sonnet"],
-      "default": "haiku"
+      "options": ["sonnet", "haiku"],
+      "default": "sonnet"
     }
   }
 }

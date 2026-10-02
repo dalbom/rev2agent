@@ -34,7 +34,9 @@ import {
 // Claude Code loads it only for sessions opened there; the check also holds a
 // copy installed anywhere else to Rev2Agent sessions.
 const ROOT_MARKERS = ['prompts/agent_workflow.md', 'prompts/conventions.md']
-const DEFAULT_MODEL = 'haiku'
+// Sonnet by default: Haiku's Korean asides spelled out numbers and slipped
+// into translationese; it stays a /config choice.
+const DEFAULT_MODEL = 'sonnet'
 const MODEL_TIMEOUT_MS = 30_000
 const MODEL_EFFORT = 'low'
 const MAX_REPLY_TOKENS = 300

@@ -47,7 +47,7 @@ describe('register', () => {
         immediate: true,
       },
     ])
-    expect((await $.command.run(command(''))).text).toBe('on · this session is served · model haiku · last: none yet')
+    expect((await $.command.run(command(''))).text).toBe('on · this session is served · model sonnet · last: none yet')
   })
 
   test('a finished answer shows the aside in a bubble beside the avatar the model named', async ($, on) => {
@@ -61,7 +61,7 @@ describe('register', () => {
 
     expect(world.calls).toEqual([
       {
-        model: 'haiku',
+        model: 'sonnet',
         system: `${SYSTEM_PROMPT}\n\n${INSTRUCTION}`,
         prompt: buildPayload(PROMPT, ANSWER),
         maxTokens: 300,
@@ -276,15 +276,15 @@ describe('register', () => {
     ])
   })
 
-  test('the model named in /config writes the aside', { options: { model: 'sonnet' } }, async ($, on) => {
+  test('the model named in /config writes the aside', { options: { model: 'haiku' } }, async ($, on) => {
     const world = worldOf(on)
     world.replies.push({ text: REPLY })
 
     await $.session.start(SESSION)
     await $.turn.complete(completed('t1', ANSWER))
     await world.clock.settle()
-    expect(world.calls.map(call => call.model)).toEqual(['sonnet'])
-    expect((await $.command.run(command('status'))).text).toContain('model sonnet')
+    expect(world.calls.map(call => call.model)).toEqual(['haiku'])
+    expect((await $.command.run(command('status'))).text).toContain('model haiku')
   })
 
   test('/reviewer2 again asks once more for the last answer, even when off', async ($, on) => {

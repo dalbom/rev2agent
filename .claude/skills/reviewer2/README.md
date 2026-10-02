@@ -11,7 +11,7 @@ Mods need Claude Code 2.1.287 or later. Older builds skip the hooks module.
 ## Behaviour
 
 - `turn.start` keeps the prompt and takes the bubble down. `turn.complete` starts the model call in the background and returns at once. Subagent turns, interruptions, refusals and errors get no aside.
-- The model call is `$.model.complete` on the session's own client: the `model` option (haiku by default), effort `low`, 300 output tokens, 30 s timeout. At most two run at once.
+- The model call is `$.model.complete` on the session's own client: the `model` option (sonnet by default), effort `low`, 300 output tokens, 30 s timeout. At most two run at once.
 - The reply's first line names an avatar in brackets (`[skeptical]`); the rest is the aside. `SKIP` shows nothing. An unknown id falls back to the manifest's default.
 - While the model drafts, the band shows the `thinking` avatar with `…` (terminal: a dim line). Nothing shows while the assistant is working.
 - The bubble is saved per session in `$.store`, so a resume or a reload shows it again until the next prompt. The 20 most recent sessions are kept.
@@ -24,7 +24,7 @@ Mods need Claude Code 2.1.287 or later. Older builds skip the hooks module.
 | Option | Default | |
 | --- | --- | --- |
 | `enabled` | `true` | Draft an aside after each answer |
-| `model` | `haiku` | `haiku` or `sonnet` |
+| `model` | `sonnet` | `sonnet` or `haiku` |
 
 `/reviewer2` (or `/reviewer2 status`) shows the state and the last result. `/reviewer2 on|off` changes the `enabled` row through `$.config.set`, which reloads the module with the new value. `/reviewer2 again` drafts an aside for the last answer once more, even when off.
 

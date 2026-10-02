@@ -127,7 +127,7 @@ At phase transitions and result assessments, the agent speaks as Reviewer 2. It 
 In Claude Code, Reviewer 2 also has a face. After each answer, a one-line aside appears in a speech bubble above the prompt, beside one of 36 avatars chosen to fit the line. The bubble is decoration only. It is never added to the conversation, so the agent never reads it and it cannot influence research decisions.
 
 - **Where it runs:** sessions opened at the repository root. It ships as a project mod in `.claude/skills/reviewer2/`, so Claude Code loads it once you trust the folder, with no install step. It needs Claude Code 2.1.287 or later. Codex is not supported.
-- **Cost:** one short model call per answer on your own Claude account (Haiku by default; `/config` can switch it to Sonnet). Reviewer 2 stays quiet when you sound frustrated or the topic is serious.
+- **Cost:** one short model call per answer on your own Claude account (Sonnet by default; `/config` can switch it to the cheaper Haiku). Reviewer 2 stays quiet when you sound frustrated or the topic is serious.
 - **Turning it off or on:** `/reviewer2 off` and `/reviewer2 on`, or the "Reviewer 2 bubble" row in `/config` (they change the same setting). `/reviewer2` shows the status. To unload the mod entirely, set `"reviewer2@skills-dir": false` under `enabledPlugins` in `.claude/settings.local.json`.
 - **Avatars:** the desktop app and VS Code show them. In a terminal they appear in kitty and Ghostty; other terminals show the bubble alone.
 

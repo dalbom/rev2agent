@@ -90,7 +90,7 @@ export function worldOf(on: On, options: { store?: Record<string, unknown>; sess
     root: ROOT,
     markers: new Set([`${ROOT}/prompts/agent_workflow.md`, `${ROOT}/prompts/conventions.md`]),
     manifest: MANIFEST,
-    config: { enabled: true, model: 'haiku' },
+    config: { enabled: true, model: 'sonnet' },
     configSets: [],
     sessionId: options.sessionId ?? 'session-1',
   }
