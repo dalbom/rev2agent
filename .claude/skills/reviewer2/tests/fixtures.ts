@@ -157,6 +157,7 @@ export function worldOf(on: On, options: { store?: Record<string, unknown>; sess
   })
   on('session.start', () => ({ cwd: ROOT }))
   on('classic.SessionStart', () => ({}))
+  on('prompt.submit', ($, e) => ({ text: e.text }))
   on('turn.start', ($, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box', props: {}, children: [] }))

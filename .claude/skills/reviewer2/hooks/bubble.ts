@@ -20,6 +20,32 @@ export function clip(text: string, limit: number): string {
   return trimmed.slice(0, end).trimEnd()
 }
 
+// Prompts that start a turn without the person typing them: a background
+// task's or a peer's notification, a schedule, a coordinator, an observer.
+const NOT_FROM_PERSON = new Set([
+  'task-notification',
+  'scheduled-trigger',
+  'peer',
+  'peer-send-message',
+  'projects-relay',
+  'coordinator',
+  'observer',
+  'observer-activity',
+  'auto-continuation',
+])
+
+/**
+ * Whether a submitted prompt holds the person's own words (`prompt.submit`'s
+ * origin). No origin means the person's, as the engine documents it. A
+ * plugin's prompt counts only when sent as the person's; a kind this build
+ * does not name counts as the person's.
+ */
+export function isFromPerson(origin: { kind: string; asUser?: boolean } | undefined): boolean {
+  if (origin === undefined) return true
+  if (origin.kind === 'plugin') return origin.asUser === true
+  return !NOT_FROM_PERSON.has(origin.kind)
+}
+
 /**
  * What the model reads: the user's message and the assistant's answer, each
  * clipped and fenced as material, then a reminder to answer in the format only.

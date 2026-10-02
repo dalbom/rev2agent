@@ -116,6 +116,29 @@ describe('register', () => {
     expect(textOf(await $.ui.render(bandOf()))).toBe(SHOWN)
   })
 
+  test("a turn a notification started reads the person's last own prompt, not the notification", async ($, on) => {
+    const world = worldOf(on)
+    world.replies.push({ text: REPLY }, { text: REPLY })
+    const NOTE = 'survey agent finished: 10 papers, all BibTeX verified.'
+
+    await $.session.start(SESSION)
+    // The test kit leaves origin unset unless given: unset reads as the person's own.
+    const submit = $.prompt.submit as (input: object) => Promise<unknown>
+    await submit({ text: PROMPT })
+    await $.turn.start({ text: PROMPT, turnId: 't1' })
+    await $.turn.complete(completed('t1', ANSWER))
+    await world.clock.settle()
+    await submit({ text: NOTE, origin: { kind: 'task-notification' } })
+    await $.turn.start({ text: NOTE, turnId: 't2' })
+    await $.turn.complete(completed('t2', '서베이 에이전트도 끝났습니다.'))
+    await world.clock.settle()
+
+    expect(world.calls.map(call => call.prompt)).toEqual([
+      buildPayload(PROMPT, ANSWER),
+      buildPayload(PROMPT, '서베이 에이전트도 끝났습니다.'),
+    ])
+  })
+
   test('the next prompt takes the bubble down, and an aside that finishes after it stays unsaid', async ($, on) => {
     const world = worldOf(on)
     world.replies.push({ text: REPLY }, { text: '[cheer]\n늦은 한마디', delayMs: 5_000 })

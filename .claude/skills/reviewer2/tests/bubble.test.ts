@@ -9,6 +9,7 @@ import {
   describeOutcome,
   firstLineOf,
   formatInstruction,
+  isFromPerson,
   MAX_ANSWER_CHARS,
   MAX_ASIDE_CHARS,
   MAX_UNTAGGED_CHARS,
@@ -126,6 +127,18 @@ describe('bubble', () => {
     expect(text).toContain('stern: 기본 (neutral, default)')
     expect(text).toContain('plain: plain\n'.trimEnd())
     expect(text.startsWith('Output format:')).toBe(true)
+  })
+
+  test("isFromPerson tells the person's prompts from notifications", () => {
+    for (const kind of ['composer', 'bridge', 'sdk', 'unclassified', 'channel', 'slack-ping']) {
+      expect(isFromPerson({ kind })).toBe(true)
+    }
+    for (const kind of ['task-notification', 'scheduled-trigger', 'peer', 'peer-send-message', 'coordinator', 'observer']) {
+      expect(isFromPerson({ kind })).toBe(false)
+    }
+    expect(isFromPerson(undefined)).toBe(true)
+    expect(isFromPerson({ kind: 'plugin' })).toBe(false)
+    expect(isFromPerson({ kind: 'plugin', asUser: true })).toBe(true)
   })
 
   test('terminalDrawsImages recognizes kitty and Ghostty only', () => {

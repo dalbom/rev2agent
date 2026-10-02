@@ -20,6 +20,7 @@ import {
   describeOutcome,
   firstLineOf,
   formatInstruction,
+  isFromPerson,
   parseCatalog,
   parseIndex,
   parseReply,
@@ -75,6 +76,8 @@ let checkedRoot: { root: string; isServed: boolean } | null = null
 let drawsImages = false
 let loadedSessionId: string | null = null
 let lastPrompt = ''
+// The person's own latest words, kept by prompt.submit; null until it has seen them.
+let lastPersonPrompt: string | null = null
 let latestTurnId: string | null = null
 let lastJob: Job | null = null
 let lastOutcome: Outcome | null = null
@@ -403,6 +406,7 @@ export function register(on: On, options: PluginOptions): void {
     promptsByTurn.clear()
     lastJob = null
     latestTurnId = null
+    lastPersonPrompt = null
     try {
       await loadSession($, await $.session.id())
     } catch (error) {
@@ -412,9 +416,16 @@ export function register(on: On, options: PluginOptions): void {
     return next(e)
   })
 
+  on('prompt.submit', async ($, e, next) => {
+    if (isFromPerson(e.origin) && e.text.trim() !== '') lastPersonPrompt = e.text
+    return next(e)
+  })
+
   on('turn.start', async ($, e, next) => {
     if (e.text.trim() !== '') lastPrompt = e.text
-    promptsByTurn.set(e.turnId, e.text.trim() !== '' ? e.text : lastPrompt)
+    // A turn a task notification or a peer's message started carries that
+    // text, not the person's: the aside reads the person's last own words.
+    promptsByTurn.set(e.turnId, lastPersonPrompt ?? lastPrompt)
     while (promptsByTurn.size > MAX_TRACKED_TURNS) {
       const oldest = promptsByTurn.keys().next().value
       if (oldest === undefined) break
