@@ -1,0 +1,385 @@
+{
+  "character": "Reviewer 2 (Rev2Agent mascot, based on logo.png)",
+  "size": 128,
+  "default": "stern",
+  "avatars": [
+    {
+      "id": "stern",
+      "file": "stern.png",
+      "label_ko": "기본 (팔짱 낀 심사위원)",
+      "tags": [
+        "neutral",
+        "default",
+        "judging",
+        "stern"
+      ]
+    },
+    {
+      "id": "skeptical",
+      "file": "skeptical.png",
+      "label_ko": "안경 너머 의심",
+      "tags": [
+        "skeptical",
+        "really",
+        "doubt",
+        "review"
+      ]
+    },
+    {
+      "id": "grudging-nod",
+      "file": "grudging-nod.png",
+      "label_ko": "마지못한 인정",
+      "tags": [
+        "approve",
+        "ok",
+        "grudging",
+        "fine"
+      ]
+    },
+    {
+      "id": "laugh",
+      "file": "laugh.png",
+      "label_ko": "폭소",
+      "tags": [
+        "laugh",
+        "funny",
+        "sarcasm"
+      ]
+    },
+    {
+      "id": "surprised",
+      "file": "surprised.png",
+      "label_ko": "놀람",
+      "tags": [
+        "surprise",
+        "unexpected",
+        "wow"
+      ]
+    },
+    {
+      "id": "angry",
+      "file": "angry.png",
+      "label_ko": "분노",
+      "tags": [
+        "angry",
+        "annoyed",
+        "furious"
+      ]
+    },
+    {
+      "id": "disappointed",
+      "file": "disappointed.png",
+      "label_ko": "실망",
+      "tags": [
+        "disappointed",
+        "sigh",
+        "failed"
+      ]
+    },
+    {
+      "id": "thinking",
+      "file": "thinking.png",
+      "label_ko": "생각 중",
+      "tags": [
+        "thinking",
+        "pondering",
+        "hmm",
+        "planning"
+      ]
+    },
+    {
+      "id": "yawn",
+      "file": "yawn.png",
+      "label_ko": "하품",
+      "tags": [
+        "tired",
+        "bored",
+        "late-night"
+      ]
+    },
+    {
+      "id": "reading",
+      "file": "reading.png",
+      "label_ko": "원고 정독",
+      "tags": [
+        "reading",
+        "review",
+        "focus",
+        "literature"
+      ]
+    },
+    {
+      "id": "red-pen",
+      "file": "red-pen.png",
+      "label_ko": "빨간 펜",
+      "tags": [
+        "editing",
+        "critique",
+        "review",
+        "writing"
+      ]
+    },
+    {
+      "id": "major-revisions",
+      "file": "major-revisions.png",
+      "label_ko": "MAJOR REVISIONS 판정",
+      "tags": [
+        "verdict",
+        "major-revision",
+        "reject",
+        "review"
+      ]
+    },
+    {
+      "id": "accept",
+      "file": "accept.png",
+      "label_ko": "마지못한 ACCEPT",
+      "tags": [
+        "verdict",
+        "accept",
+        "approve",
+        "success"
+      ]
+    },
+    {
+      "id": "magnifier",
+      "file": "magnifier.png",
+      "label_ko": "인용 검증",
+      "tags": [
+        "verify",
+        "citation",
+        "inspect",
+        "suspicious"
+      ]
+    },
+    {
+      "id": "accusing",
+      "file": "accusing.png",
+      "label_ko": "지적",
+      "tags": [
+        "blame",
+        "you",
+        "critique",
+        "warning"
+      ]
+    },
+    {
+      "id": "facepalm",
+      "file": "facepalm.png",
+      "label_ko": "이마 짚기",
+      "tags": [
+        "facepalm",
+        "exasperated",
+        "silly-mistake"
+      ]
+    },
+    {
+      "id": "shrug",
+      "file": "shrug.png",
+      "label_ko": "납득 불가",
+      "tags": [
+        "unconvinced",
+        "shrug",
+        "unclear",
+        "question"
+      ]
+    },
+    {
+      "id": "thumbs-down",
+      "file": "thumbs-down.png",
+      "label_ko": "엄지 아래",
+      "tags": [
+        "reject",
+        "bad",
+        "disapprove"
+      ]
+    },
+    {
+      "id": "waiting",
+      "file": "waiting.png",
+      "label_ko": "시계 보기",
+      "tags": [
+        "waiting",
+        "long-task",
+        "experiment-running",
+        "impatient"
+      ]
+    },
+    {
+      "id": "idea",
+      "file": "idea.png",
+      "label_ko": "아이디어",
+      "tags": [
+        "idea",
+        "suggestion",
+        "eureka",
+        "planning"
+      ]
+    },
+    {
+      "id": "cheer",
+      "file": "cheer.png",
+      "label_ko": "환호",
+      "tags": [
+        "success",
+        "done",
+        "tests-pass",
+        "celebrate"
+      ]
+    },
+    {
+      "id": "confused",
+      "file": "confused.png",
+      "label_ko": "갸우뚱",
+      "tags": [
+        "confused",
+        "unclear",
+        "question"
+      ]
+    },
+    {
+      "id": "thumbs-up",
+      "file": "thumbs-up.png",
+      "label_ko": "엄지척",
+      "tags": [
+        "approve",
+        "good",
+        "ok",
+        "lgtm"
+      ]
+    },
+    {
+      "id": "coffee",
+      "file": "coffee.png",
+      "label_ko": "커피 타임",
+      "tags": [
+        "break",
+        "relaxed",
+        "idle",
+        "waiting"
+      ]
+    },
+    {
+      "id": "exhausted",
+      "file": "exhausted.png",
+      "label_ko": "녹초",
+      "tags": [
+        "exhausted",
+        "overwhelmed",
+        "long-session"
+      ]
+    },
+    {
+      "id": "oops",
+      "file": "oops.png",
+      "label_ko": "앗 실수",
+      "tags": [
+        "mistake",
+        "bug",
+        "error",
+        "sorry"
+      ]
+    },
+    {
+      "id": "wave",
+      "file": "wave.png",
+      "label_ko": "손 흔들기",
+      "tags": [
+        "hello",
+        "bye",
+        "greeting"
+      ]
+    },
+    {
+      "id": "shocked",
+      "file": "shocked.png",
+      "label_ko": "충격",
+      "tags": [
+        "shock",
+        "panic",
+        "alarm"
+      ]
+    },
+    {
+      "id": "suspicious",
+      "file": "suspicious.png",
+      "label_ko": "의심 곁눈질",
+      "tags": [
+        "suspicious",
+        "doubt",
+        "side-eye"
+      ]
+    },
+    {
+      "id": "eye-roll",
+      "file": "eye-roll.png",
+      "label_ko": "눈 굴리기",
+      "tags": [
+        "eye-roll",
+        "sarcasm",
+        "obviously"
+      ]
+    },
+    {
+      "id": "tsk",
+      "file": "tsk.png",
+      "label_ko": "쯧쯧",
+      "tags": [
+        "scold",
+        "warning",
+        "no-no"
+      ]
+    },
+    {
+      "id": "teary",
+      "file": "teary.png",
+      "label_ko": "울먹",
+      "tags": [
+        "sad",
+        "hurt",
+        "rejected",
+        "failed"
+      ]
+    },
+    {
+      "id": "smug",
+      "file": "smug.png",
+      "label_ko": "의기양양",
+      "tags": [
+        "proud",
+        "smug",
+        "nailed-it"
+      ]
+    },
+    {
+      "id": "relieved",
+      "file": "relieved.png",
+      "label_ko": "안도",
+      "tags": [
+        "relief",
+        "phew",
+        "fixed"
+      ]
+    },
+    {
+      "id": "delighted",
+      "file": "delighted.png",
+      "label_ko": "기쁨",
+      "tags": [
+        "excited",
+        "delighted",
+        "anticipation"
+      ]
+    },
+    {
+      "id": "goodnight",
+      "file": "goodnight.png",
+      "label_ko": "잘 자",
+      "tags": [
+        "goodnight",
+        "sleep",
+        "end-of-day"
+      ]
+    }
+  ]
+}

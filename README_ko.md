@@ -120,6 +120,19 @@ Phase 전환이나 결과 평가 시점에 Reviewer 2로서 말합니다.
 
 이 페르소나 덕분에 ablation 누락이나 약한 baseline 같은 문제를 실제 리뷰 전에 잡아냅니다.
 
+### Reviewer 2 말풍선 (Claude Code)
+
+<p align="center">
+  <img src="assets/avatars/preview.png" alt="Reviewer 2 아바타 표정 36종" width="640">
+</p>
+
+Claude Code에서는 Reviewer 2에게 얼굴도 있습니다. 답이 끝날 때마다 프롬프트 입력창 위에 Reviewer 2의 한마디가 말풍선으로 뜨고, 옆에는 그 말에 맞는 표정의 아바타가 표시됩니다. 아바타는 36종입니다. 말풍선은 화면에만 표시되고 대화에는 들어가지 않습니다. 그래서 에이전트가 읽지 않고 연구 판단에도 영향을 주지 않습니다.
+
+- **적용 범위:** 저장소 루트에서 연 세션입니다. 프로젝트 mod(`.claude/skills/reviewer2/`)로 들어 있어서, 폴더를 신뢰하면 설치 없이 로드됩니다. Claude Code 2.1.287 이상이 필요하고 Codex는 지원하지 않습니다.
+- **비용:** 답 하나마다 사용자의 Claude 계정으로 짧은 모델 호출이 한 번 나갑니다. 기본은 Haiku이고 `/config`에서 Sonnet으로 바꿀 수 있습니다. 사용자가 짜증 났거나 주제가 무거우면 말풍선을 띄우지 않습니다.
+- **끄기와 켜기:** `/reviewer2 off`, `/reviewer2 on`을 쓰거나 `/config`의 "Reviewer 2 bubble" 항목을 바꿉니다. 둘은 같은 설정입니다. `/reviewer2`는 상태를 보여줍니다. mod 자체를 아예 로드하지 않으려면 `.claude/settings.local.json`의 `enabledPlugins`에 `"reviewer2@skills-dir": false`를 넣습니다.
+- **아바타 표시:** 데스크톱 앱과 VS Code에서 보입니다. 터미널은 kitty와 Ghostty에서만 보이고, 다른 터미널에는 말풍선만 뜹니다.
+
 ## 기존 연구 에이전트와의 차이점
 
 | | Rev2Agent | 일반적인 연구 에이전트 |
@@ -155,6 +168,8 @@ rev2agent/
 │   ├── source_evaluator.py         # 문헌 소스 신뢰도 평가
 │   └── validate_manuscript.py      # LaTeX 교차참조/플레이스홀더 검증
 ├── tests/                       # 공유 스크립트 테스트 스위트
+├── assets/avatars/              # Reviewer 2 아바타 생성 프롬프트, 자르기 스크립트, 미리보기
+├── .claude/skills/reviewer2/    # Claude Code mod: Reviewer 2 말풍선
 ├── .github/                     # CI 워크플로
 └── .gitignore
 ```
